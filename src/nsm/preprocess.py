@@ -1,4 +1,4 @@
-"""Preprocess pipeline: temporal median subtract + spatial median along x; lpdiff PNGs only."""
+"""Preprocess pipeline: temporal median subtract + wavelet LP along x; lpdiff PNGs only."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from nsm.lpdiff import (
 
 
 def _lpdiff_output_paths(template: Path, h5_path: Path, n_files: int) -> tuple[Path, Path]:
-    """``lpdiff`` = preprocessed minus spatial-median-smoothed (along x); output PNG pair."""
+    """``lpdiff`` = preprocessed minus wavelet LP (along x); output PNG pair."""
     base = output_path_for_file(template, h5_path, n_files)
     stem, suf = base.stem, base.suffix
     return (
@@ -46,7 +46,7 @@ def _plot_lpdiff(
     out_heatmap: Path | None,
     show: bool,
 ) -> None:
-    """``residual`` = preprocessed (raw − temporal median) minus spatial median along x."""
+    """``residual`` = preprocessed (raw − temporal median) minus wavelet LP along x."""
     n_time, _ = residual.shape
     t_rows = equidistant_time_indices(n_time, k=5)
     stacked = np.stack([residual[int(t)].astype(np.float32, copy=False) for t in t_rows], axis=0)
@@ -58,9 +58,9 @@ def _plot_lpdiff(
 
     base_ylab = "raw − temporal median"
     base_heat = "raw − temporal median (per column)"
-    ylab = f"{base_ylab} − smooth(x)"
-    heat_title = f"{base_heat} − spatial median (x)"
-    prefix = f"preprocessed − {smooth_caption}\n"
+    ylab = f"{base_ylab} − LP"
+    heat_title = f"{base_heat} − wavelet LP along x"
+    prefix = f"preprocessed − wavelet LP ({smooth_caption})\n"
     slices_note = f"{len(t_rows)} equidistant time slice{'s' if len(t_rows) != 1 else ''} t ∈ {{{', '.join(str(int(t)) for t in t_rows)}}}"
     line_title = f"{path.name}\n{prefix}{ylab} vs x — {slices_note} • {meta}"
     map_title = f"{prefix}{heat_title}\n{meta}"
@@ -121,11 +121,14 @@ def _plot_preprocess_outputs(
     out_lpdiff: tuple[Path | None, Path | None],
     show: bool,
     dataset_name: str,
-    median_kernel_x: int,
+    wavelet: str,
+    wavelet_level: int,
 ) -> None:
     arr, full_shape = load_kymograph(path, dataset_name=dataset_name)
 
-    res, smooth_caption = lpdiff_residual(arr, median_kernel_x=median_kernel_x)
+    res, smooth_caption = lpdiff_residual(
+        arr, wavelet=wavelet, wavelet_level=wavelet_level
+    )
 
     meta = f"loaded array {tuple(arr.shape)} • on-disk {full_shape}"
 
@@ -143,9 +146,9 @@ def _plot_preprocess_outputs(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Two PNGs per file: (preproc − spatial median along x) — kymograph and line panel "
+            "Two PNGs per file: (preproc − wavelet LP along x) — kymograph and line panel "
             "(up to 5 equidistant time slices, distinct colors). "
-            "Temporal median subtraction + spatial median smooth; only *_lpdiff_* outputs."
+            "Temporal median subtraction + wavelet low-pass; only *_lpdiff_* outputs."
         )
     )
     parser.add_argument(
@@ -167,12 +170,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--median-kernel-x",
+        "--wavelet",
+        type=str,
+        default="db4",
+        help="PyWavelets name; 1-D LP along **x** per time row (default: db4)",
+    )
+    parser.add_argument(
+        "--wavelet-level",
         type=int,
-        default=15,
-        help=(
-            "Spatial median window along x (odd length; even values bump +1; default: 15)"
-        ),
+        default=4,
+        help="1-D decomposition depth along x (clamped; default: 4)",
     )
     parser.add_argument(
         "--dataset",
@@ -190,7 +197,7 @@ def main() -> None:
     args = parser.parse_args()
     if not args.no_save:
         print(
-            "nsm-preprocess: lpdiff PNGs only (2 per .h5); temporal median + spatial median (x)."
+            "nsm-preprocess: lpdiff PNGs only (2 per .h5); temporal median + wavelet LP (x)."
         )
     data_dir = args.directory.expanduser().resolve()
     paths = discover_h5_files(data_dir)
@@ -207,7 +214,8 @@ def main() -> None:
             out_lpdiff=out_lp,
             show=args.show or args.no_save,
             dataset_name=args.dataset,
-            median_kernel_x=args.median_kernel_x,
+            wavelet=args.wavelet,
+            wavelet_level=args.wavelet_level,
         )
 
     if args.show or args.no_save:

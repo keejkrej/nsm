@@ -1,9 +1,9 @@
-"""Shared lpdiff math: median subtraction, x-axis median smooth, residual, and min/max plot scaling."""
+"""Shared lpdiff math: median subtraction, wavelet LP along x, residual, and min/max plot scaling."""
 
 from __future__ import annotations
 
 import numpy as np
-from scipy.ndimage import median_filter
+import pywt
 
 from nsm.statistics import temporal_median_background
 
@@ -17,24 +17,35 @@ def subtract_background(arr: np.ndarray, background: np.ndarray) -> np.ndarray:
     return arr - background
 
 
-def _median_footprint_x(size_x: int) -> int:
-    k = max(1, int(size_x))
-    if k % 2 == 0:
-        k += 1
-    return k
+def wavelet_lowpass_along_x(
+    arr: np.ndarray,
+    *,
+    wavelet: str = "db4",
+    level: int = 4,
+) -> tuple[np.ndarray, int]:
+    """1-D approximation-only low-pass along axis **x** for each time row (detail coeffs zeroed).
 
+    Assumes ``arr`` is shaped ``(time, x)``. No smoothing along time.
 
-def median_smooth_along_x(arr: np.ndarray, *, size_x: int) -> np.ndarray:
-    """Median filter along **x** only (shape ``(1, k)`` footprint), per time row.
-
-    ``size_x`` is adjusted to an odd integer ≥ 1. Boundaries use ``mode='reflect'``.
+    Returns the filtered array and the decomposition depth used (0 if the input
+    was returned unchanged).
     """
     x = np.asarray(arr, dtype=np.float64)
     if x.ndim != 2:
         raise ValueError(f"expected 2-D (time, x) array, got shape {x.shape}")
-    k = _median_footprint_x(size_x)
-    out = median_filter(x, size=(1, k), mode="reflect")
-    return out.astype(np.float32)
+    n_time, width = x.shape
+    w = pywt.Wavelet(wavelet)
+    max_level = pywt.dwt_max_level(int(width), w)
+    if max_level < 1:
+        return arr.astype(np.float32, copy=False), 0
+    lvl = max(1, min(int(level), max_level))
+    out = np.empty_like(x)
+    for i in range(n_time):
+        coeffs = pywt.wavedec(x[i], wavelet, level=lvl, mode="symmetric")
+        coeffs_lp = [coeffs[0]] + [np.zeros_like(c) for c in coeffs[1:]]
+        rec = pywt.waverec(coeffs_lp, wavelet, mode="symmetric")
+        out[i] = rec[:width]
+    return out.astype(np.float32), lvl
 
 
 def equidistant_time_indices(n_time: int, *, k: int = 5) -> np.ndarray:
@@ -64,9 +75,10 @@ def kymograph_clip_for_imshow(arr_td: np.ndarray) -> tuple[np.ndarray, float, fl
     return disp, vmin, vmax
 
 
-def spatial_median_caption(requested_size_x: int) -> str:
-    k = _median_footprint_x(requested_size_x)
-    return f"median filter along x, footprint {k}"
+def wavelet_lp_caption(wavelet: str, lvl: int) -> str:
+    if lvl:
+        return f"{wavelet}, level {lvl}, axis=x"
+    return f"{wavelet}, axis=x (no decomposition; LP equals preproc)"
 
 
 def median_subtracted(arr_tx: np.ndarray) -> np.ndarray:
@@ -78,10 +90,13 @@ def median_subtracted(arr_tx: np.ndarray) -> np.ndarray:
 def lpdiff_residual(
     arr_tx: np.ndarray,
     *,
-    median_kernel_x: int = 15,
+    wavelet: str = "db4",
+    wavelet_level: int = 4,
 ) -> tuple[np.ndarray, str]:
-    """Median subtract → spatial median along x → ``preproc − smooth`` and caption."""
+    """Median subtract → wavelet LP along x → ``preproc − LP`` and caption."""
     corrected = median_subtracted(arr_tx)
-    lp = median_smooth_along_x(corrected, size_x=median_kernel_x)
+    lp, lvl = wavelet_lowpass_along_x(
+        corrected, wavelet=wavelet, level=wavelet_level
+    )
     res = corrected.astype(np.float32, copy=False) - lp
-    return res, spatial_median_caption(median_kernel_x)
+    return res, wavelet_lp_caption(wavelet, lvl)
