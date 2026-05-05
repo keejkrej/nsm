@@ -7,7 +7,7 @@ from pathlib import Path
 
 import h5py
 
-from nsm.data import DATASET_DEFAULT, MAX_TIME_SAMPLES
+from nsm.kymograph_io import DEFAULT_KYMOGRAPH_DATASET, DEFAULT_LEADING_TIME_ROWS
 
 
 def crop_kymograph_h5(
@@ -48,7 +48,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Create a smaller HDF5 by keeping only the leading time rows "
-            f"(default {MAX_TIME_SAMPLES}). Use before nsm-raw / nsm-preprocess when you want "
+            f"(default {DEFAULT_LEADING_TIME_ROWS}). Use before nsm-raw / nsm-preprocess when you want "
             "a fixed time window; downstream tools load the full extent of their input file."
         )
     )
@@ -76,14 +76,14 @@ def main() -> None:
     parser.add_argument(
         "--max-time",
         type=int,
-        default=MAX_TIME_SAMPLES,
-        help=f"Number of leading time rows to keep (default: {MAX_TIME_SAMPLES})",
+        default=DEFAULT_LEADING_TIME_ROWS,
+        help=f"Number of leading time rows to keep (default: {DEFAULT_LEADING_TIME_ROWS})",
     )
     parser.add_argument(
         "--dataset",
         type=str,
-        default=DATASET_DEFAULT,
-        help=f"HDF5 dataset name (default: {DATASET_DEFAULT})",
+        default=DEFAULT_KYMOGRAPH_DATASET,
+        help=f"HDF5 dataset key (default: {DEFAULT_KYMOGRAPH_DATASET})",
     )
     args = parser.parse_args()
 

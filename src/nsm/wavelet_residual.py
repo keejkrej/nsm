@@ -1,4 +1,4 @@
-"""Shared lpdiff math: median subtraction, wavelet LP along x, residual, and min/max plot scaling."""
+"""Wavelet residual on kymographs: median background, LP along *x*, illumination-rescaled I², plotting scales."""
 
 from __future__ import annotations
 

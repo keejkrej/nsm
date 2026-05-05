@@ -1,4 +1,4 @@
-"""Preprocess: lpdiff residual HDF5 (+ illumination + Gaussian I²) + PNG panels."""
+"""Write preprocessed HDF5 (wavelet residual + illumination + I²) and PNG panels."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
-from nsm.data import (
-    DATASET_DEFAULT,
+from nsm.kymograph_io import (
+    DEFAULT_KYMOGRAPH_DATASET,
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
     I2_GAUSSIAN_DATASET,
@@ -19,7 +19,7 @@ from nsm.data import (
     load_kymograph,
     resolve_output_directory,
 )
-from nsm.lpdiff import (
+from nsm.wavelet_residual import (
     I2_GAUSSIAN_SIGMA,
     ILLUMINATION_GAUSSIAN_SIGMA,
     equidistant_time_indices,
@@ -243,8 +243,8 @@ def main() -> None:
     parser.add_argument(
         "--dataset",
         type=str,
-        default=DATASET_DEFAULT,
-        help=f"HDF5 dataset name (default: {DATASET_DEFAULT})",
+        default=DEFAULT_KYMOGRAPH_DATASET,
+        help=f"HDF5 dataset key (default: {DEFAULT_KYMOGRAPH_DATASET})",
     )
     parser.add_argument("--show", action="store_true", help="Show figures interactively")
     parser.add_argument(

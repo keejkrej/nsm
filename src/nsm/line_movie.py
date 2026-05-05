@@ -1,4 +1,4 @@
-"""Line-scan movies along time (raw or preprocessed line vs x)."""
+"""MP4 line movies: raw intensity or preprocessed residuals vs *x* (`nsm-movie-*`)."""
 
 from __future__ import annotations
 
@@ -11,16 +11,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from nsm.data import (
-    DATASET_DEFAULT,
+from nsm.kymograph_io import (
+    DEFAULT_KYMOGRAPH_DATASET,
+    DEFAULT_LEADING_TIME_ROWS,
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
     I2_GAUSSIAN_DATASET,
-    MAX_TIME_SAMPLES,
     load_kymograph,
     resolve_video_destination,
 )
-from nsm.lpdiff import I2_GAUSSIAN_SIGMA, y_axis_minmax
+from nsm.wavelet_residual import I2_GAUSSIAN_SIGMA, y_axis_minmax
 
 # Output pixels: keep **square** aspect to match ``FIGSIZE_INCHES`` (line movies use a square
 # figure). A wide target (e.g. 1280×512) was squeezing the plot vertically after resize.
@@ -145,14 +145,14 @@ def _movie_argparser(description: str, default_output: Path) -> argparse.Argumen
     p.add_argument(
         "--dataset",
         type=str,
-        default=DATASET_DEFAULT,
-        help=f"HDF5 dataset name (default: {DATASET_DEFAULT})",
+        default=DEFAULT_KYMOGRAPH_DATASET,
+        help=f"HDF5 dataset key (default: {DEFAULT_KYMOGRAPH_DATASET})",
     )
     p.add_argument(
         "--max-frames",
         type=int,
-        default=MAX_TIME_SAMPLES,
-        help=f"At most this many frames (default: {MAX_TIME_SAMPLES})",
+        default=DEFAULT_LEADING_TIME_ROWS,
+        help=f"At most this many frames (default: {DEFAULT_LEADING_TIME_ROWS})",
     )
     return p
 
@@ -193,7 +193,7 @@ def main_movie_raw() -> None:
         (
             "Animate raw intensity vs position-x for each time row of one .h5 "
             "(full file loaded; playback length capped by --max-frames, default "
-            f"{MAX_TIME_SAMPLES}). Pass the cropped HDF5 from nsm-crop."
+            f"{DEFAULT_LEADING_TIME_ROWS}). Pass the cropped HDF5 from nsm-crop."
         ),
         DEFAULT_PLOTS_DIR,
     )
@@ -224,7 +224,7 @@ def _main_movie_from_preprocessed_h5(*, squared: bool) -> None:
         description = (
             "Animate illumination-rescaled Gaussian I² from *_preprocessed.h5 "
             f"(`{I2_GAUSSIAN_DATASET}`, precomputed by nsm-preprocess; playback capped by "
-            f"--max-frames, default {MAX_TIME_SAMPLES})."
+            f"--max-frames, default {DEFAULT_LEADING_TIME_ROWS})."
         )
         suffix = "_movie_preprocess_I2.mp4"
         title_mode = (
@@ -239,7 +239,7 @@ def _main_movie_from_preprocessed_h5(*, squared: bool) -> None:
         description = (
             "Animate (median subtract − wavelet LP along x) vs x from nsm-preprocess "
             "*_preprocessed.h5 "
-            f"(loads full array; playback capped by --max-frames, default {MAX_TIME_SAMPLES})."
+            f"(loads full array; playback capped by --max-frames, default {DEFAULT_LEADING_TIME_ROWS})."
         )
         suffix = "_movie_preprocess.mp4"
         title_mode = "Lpdiff residual vs x (from file)"

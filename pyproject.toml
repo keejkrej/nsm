@@ -19,12 +19,12 @@ dependencies = [
 
 [project.scripts]
 nsm-crop = "nsm.crop:main"
-nsm-raw = "nsm.viz:main"
+nsm-raw = "nsm.plot_raw:main"
 nsm-preprocess = "nsm.preprocess:main"
-nsm-detect = "nsm.detect:main"
-nsm-movie-raw = "nsm.movie:main_movie_raw"
-nsm-movie-preprocess = "nsm.movie:main_movie_preprocess"
-nsm-movie-preprocess-i2 = "nsm.movie:main_movie_preprocess_i2"
+nsm-detect = "nsm.peak_detect:main"
+nsm-movie-raw = "nsm.line_movie:main_movie_raw"
+nsm-movie-preprocess = "nsm.line_movie:main_movie_preprocess"
+nsm-movie-preprocess-i2 = "nsm.line_movie:main_movie_preprocess_i2"
 
 [build-system]
 requires = ["hatchling"]

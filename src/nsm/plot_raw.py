@@ -1,4 +1,4 @@
-"""Kymograph viewer: full loaded window (no subsampling)."""
+"""Plot raw kymographs to PNG (`nsm-raw`): full time axis, percentile contrast."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from nsm.data import (
-    DATASET_DEFAULT,
+from nsm.kymograph_io import (
+    DEFAULT_KYMOGRAPH_DATASET,
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
     IMAGE_CMAP,
@@ -18,12 +18,12 @@ from nsm.data import (
 )
 
 
-def _load_kymograph_stretched(
+def load_kymograph_percentile_window(
     path: Path,
     *,
     dataset_name: str,
 ) -> tuple[np.ndarray, tuple[int, int], tuple[int, int]]:
-    """2–98% contrast stretch; returns ``(array, disk shape, loaded shape)``."""
+    """Clamp intensities with a 2–98% percentile window; returns array, on-disk shape, loaded shape."""
     arr, disk_shape = load_kymograph(path, dataset_name=dataset_name)
     vmin, vmax = np.percentile(arr, (2, 98))
     stretched = np.clip(arr.astype(np.float32, copy=False), vmin, vmax)
@@ -31,7 +31,7 @@ def _load_kymograph_stretched(
 
 
 def _plot(path: Path, out_path: Path | None, show: bool, dataset_name: str) -> None:
-    arr, disk_shape, loaded_shape = _load_kymograph_stretched(
+    arr, disk_shape, loaded_shape = load_kymograph_percentile_window(
         path, dataset_name=dataset_name
     )
     display = arr.T
@@ -85,8 +85,8 @@ def main() -> None:
     parser.add_argument(
         "--dataset",
         type=str,
-        default=DATASET_DEFAULT,
-        help=f"HDF5 dataset name (default: {DATASET_DEFAULT})",
+        default=DEFAULT_KYMOGRAPH_DATASET,
+        help=f"HDF5 dataset key (default: {DEFAULT_KYMOGRAPH_DATASET})",
     )
     parser.add_argument(
         "--show",

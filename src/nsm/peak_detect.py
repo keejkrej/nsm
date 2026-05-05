@@ -1,4 +1,4 @@
-"""SciPy peak picks on illumination-rescaled `i2_gaussian` with preprocess overlays."""
+"""Detect peaks on illumination-rescaled ``i2_gaussian`` and write HDF5 + PNG overlays."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import find_peaks
 
-from nsm.data import (
+from nsm.kymograph_io import (
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
     I2_GAUSSIAN_DATASET,
@@ -18,7 +18,7 @@ from nsm.data import (
     load_kymograph,
     resolve_output_directory,
 )
-from nsm.lpdiff import (
+from nsm.wavelet_residual import (
     I2_GAUSSIAN_SIGMA,
     ILLUMINATION_GAUSSIAN_SIGMA,
     equidistant_time_indices,
@@ -31,15 +31,15 @@ PEAK_DATASET = "peaks_ix"
 PEAK_COLUMNS = np.dtype([("time", "<u4"), ("x", "<u4")])
 
 
-def collect_peaks_1d_rows(
+def gather_peaks_rowwise(
     z: np.ndarray,
     *,
     rel_prominence: float,
     distance: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """``find_peaks`` on each time row along **x**; prominence = ``rel * row_max``.
+    """Run ``find_peaks`` on each time row along **x**; prominence = ``rel * row_max``.
 
-    ``distance`` enforces separation between neighbouring peaks along **x** (pixels).
+    ``distance`` is the minimum spacing between neighbouring peaks along **x** (pixels).
     """
     nt = int(z.shape[0])
     t_list: list[int] = []
@@ -64,7 +64,7 @@ def collect_peaks_1d_rows(
     return peaks["time"], peaks["x"]
 
 
-def plot_detect_overlays(
+def plot_peak_overlays(
     src_name: Path,
     i2_gauss: np.ndarray,
     *,
@@ -246,7 +246,7 @@ def main() -> None:
         raise FileNotFoundError(f"not a file: {src}")
 
     i2_g, _ = load_kymograph(src, dataset_name=I2_GAUSSIAN_DATASET)
-    pt, px = collect_peaks_1d_rows(
+    pt, px = gather_peaks_rowwise(
         i2_g,
         rel_prominence=float(args.rel_prominence),
         distance=int(args.distance),
@@ -272,7 +272,7 @@ def main() -> None:
         f"rel_prom={args.rel_prominence:g} • distance={args.distance}px"
     )
 
-    plot_detect_overlays(
+    plot_peak_overlays(
         src,
         i2_gauss=i2_g,
         peaks_t=pt,

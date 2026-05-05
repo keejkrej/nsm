@@ -1,4 +1,4 @@
-"""Shared HDF5 kymograph loading and plot path helpers."""
+"""HDF5 kymograph I/O helpers and filesystem paths for PNG/MP4 outputs."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ import h5py
 import numpy as np
 
 
-DATASET_DEFAULT = "kymograph"
-"""Default HDF5 dataset name for kymograph arrays."""
+DEFAULT_KYMOGRAPH_DATASET = "kymograph"
+"""Default HDF5 dataset key for `(time, position)` intensity arrays."""
 
 ILLUMINATION_DATASET = "illumination"
 """Temporal-median intensity along **x**, then Gaussian-smoothed along **x** (saved curve)."""
@@ -17,8 +17,8 @@ ILLUMINATION_DATASET = "illumination"
 I2_GAUSSIAN_DATASET = "i2_gaussian"
 """Gaussian along **x** of ``(lpdiff)² / (smoothed illumination)²`` — same as preprocess/movie."""
 
-MAX_TIME_SAMPLES = 1024
-"""Default leading time rows for **cropped** exports (``nsm-crop``) and movie frame caps."""
+DEFAULT_LEADING_TIME_ROWS = 1024
+"""Default leading time rows kept by ``nsm-crop`` and used as ``--max-frames`` defaults in movies."""
 
 IMAGE_CMAP = "hot"
 """Default ``matplotlib`` colormap for kymograph-style ``imshow`` panels."""
@@ -36,7 +36,7 @@ DEFAULT_PLOTS_DIR = DEFAULT_DATA_ROOT / "plots"
 def load_kymograph(
     path: Path,
     *,
-    dataset_name: str = DATASET_DEFAULT,
+    dataset_name: str = DEFAULT_KYMOGRAPH_DATASET,
     max_time: int | None = None,
 ) -> tuple[np.ndarray, tuple[int, int]]:
     """Load kymograph as float32 ``(T, X)``. Returns ``(array, on-disk dataset shape)``.
@@ -59,14 +59,15 @@ def load_kymograph(
     return arr, raw_shape
 
 
-def discover_h5_files(data_dir: Path) -> list[Path]:
+def find_h5_files(data_dir: Path) -> list[Path]:
+    """Return `.h5` paths under ``data_dir`` sorted by name; raise if none."""
     files = sorted(data_dir.glob("*.h5"))
     if not files:
         raise FileNotFoundError(f"No .h5 files under {data_dir}")
     return files
 
 
-def output_path_for_file(template: Path, h5_path: Path, n_files: int) -> Path:
+def disambiguated_output_path(template: Path, h5_path: Path, n_files: int) -> Path:
     if n_files == 1:
         return template
     return template.with_name(f"{template.stem}_{h5_path.stem}{template.suffix}")
