@@ -9,7 +9,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ncs.data import (
+from nsm.data import (
     DATASET_DEFAULT,
     FIGSIZE_INCHES,
     discover_h5_files,
@@ -97,23 +97,23 @@ def main() -> None:
         description=(
             "Per x: median over t and percentile bands vs position "
             "(1–99%, 10–90% across time). Uses leading time slice from HDF5 "
-            "(default up to MAX_TIME_SAMPLES; see ncs.data)."
+            "(default up to MAX_TIME_SAMPLES; see nsm.data)."
         )
     )
     parser.add_argument(
         "directory",
         nargs="?",
-        default=os.path.expanduser("~/data/ncs"),
+        default=os.path.expanduser("~/data/nsm"),
         type=Path,
-        help="Directory containing .h5 files (default: ~/data/ncs)",
+        help="Directory containing .h5 files (default: ~/data/nsm)",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=Path(os.path.expanduser("~/data/ncs/plots/ncs_statistics.png")),
+        default=Path(os.path.expanduser("~/data/nsm/plots/nsm_statistics.png")),
         help=(
-            "PNG path (default: ~/data/ncs/plots/ncs_statistics.png). "
+            "PNG path (default: ~/data/nsm/plots/nsm_statistics.png). "
             "Several .h5: stem_<file>.png in that directory."
         ),
     )

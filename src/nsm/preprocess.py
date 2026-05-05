@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pywt
 
-from ncs.data import (
+from nsm.data import (
     DATASET_DEFAULT,
     FIGSIZE_INCHES,
     IMAGE_CMAP,
@@ -18,7 +18,7 @@ from ncs.data import (
     load_kymograph,
     output_path_for_file,
 )
-from ncs.statistics import temporal_median_background
+from nsm.statistics import temporal_median_background
 
 
 def subtract_background(arr: np.ndarray, background: np.ndarray) -> np.ndarray:
@@ -324,21 +324,21 @@ def main() -> None:
     parser.add_argument(
         "directory",
         nargs="?",
-        default=os.path.expanduser("~/data/ncs"),
+        default=os.path.expanduser("~/data/nsm"),
         type=Path,
-        help="Directory containing .h5 files (default: ~/data/ncs)",
+        help="Directory containing .h5 files (default: ~/data/nsm)",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=Path(os.path.expanduser("~/data/ncs/plots/ncs_preprocess.png")),
+        default=Path(os.path.expanduser("~/data/nsm/plots/nsm_preprocess.png")),
         help=(
             "Base PNG path; per .h5 writes diff & ratio each as intensity+heatmap for: "
             "raw, wavelet LP along x, and residual (preproc − LP) — filenames "
             "<stem>_{lp,lpdiff}_{intensity,heatmap}.png and "
             "<stem>_ratio_{lp,lpdiff}_{intensity,heatmap}.png. "
-            "(default: ~/data/ncs/plots/ncs_preprocess.png). Multi-file: stem_<filestem>_…."
+            "(default: ~/data/nsm/plots/nsm_preprocess.png). Multi-file: stem_<filestem>_…."
         ),
     )
     parser.add_argument(

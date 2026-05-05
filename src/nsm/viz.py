@@ -9,7 +9,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ncs.data import (
+from nsm.data import (
     DATASET_DEFAULT,
     FIGSIZE_INCHES,
     IMAGE_CMAP,
@@ -77,17 +77,17 @@ def main() -> None:
     parser.add_argument(
         "directory",
         nargs="?",
-        default=os.path.expanduser("~/data/ncs"),
+        default=os.path.expanduser("~/data/nsm"),
         type=Path,
-        help="Directory containing .h5 files (default: ~/data/ncs)",
+        help="Directory containing .h5 files (default: ~/data/nsm)",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=Path(os.path.expanduser("~/data/ncs/plots/ncs_kymographs.png")),
+        default=Path(os.path.expanduser("~/data/nsm/plots/nsm_kymographs.png")),
         help=(
-            "PNG output path (default: ~/data/ncs/plots/ncs_kymographs.png). "
+            "PNG output path (default: ~/data/nsm/plots/nsm_kymographs.png). "
             "With multiple .h5 files, writes stem_<file>.png in the same directory."
         ),
     )

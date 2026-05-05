@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from ncs.data import (
+from nsm.data import (
     DATASET_DEFAULT,
     FIGSIZE_INCHES,
     MAX_TIME_SAMPLES,
@@ -20,7 +20,7 @@ from ncs.data import (
     load_kymograph,
     output_path_for_file,
 )
-from ncs.statistics import temporal_median_background
+from nsm.statistics import temporal_median_background
 
 # Even, div by 16 — avoids libx264 / imageio padding surprises.
 _FRAME_PX_WH = (1280, 512)
@@ -118,9 +118,9 @@ def _movie_argparser(description: str, default_output: Path) -> argparse.Argumen
     p.add_argument(
         "directory",
         nargs="?",
-        default=os.path.expanduser("~/data/ncs"),
+        default=os.path.expanduser("~/data/nsm"),
         type=Path,
-        help="Directory containing .h5 files (default: ~/data/ncs)",
+        help="Directory containing .h5 files (default: ~/data/nsm)",
     )
     p.add_argument(
         "-o",
@@ -195,7 +195,7 @@ def main_movie_raw() -> None:
             "Animate raw intensity vs position-x for each loaded time slice "
             f"(≤{MAX_TIME_SAMPLES} frames)."
         ),
-        Path(os.path.expanduser("~/data/ncs/plots/ncs_movie_raw.mp4")),
+        Path(os.path.expanduser("~/data/nsm/plots/nsm_movie_raw.mp4")),
     )
     args = parser.parse_args()
     if args.max_frames < 1:
@@ -224,7 +224,7 @@ def main_movie_preprocess() -> None:
             "Animate (raw − temporal median per column) vs x for each time slice "
             f"(≤{MAX_TIME_SAMPLES} frames)."
         ),
-        Path(os.path.expanduser("~/data/ncs/plots/ncs_movie_preprocess.mp4")),
+        Path(os.path.expanduser("~/data/nsm/plots/nsm_movie_preprocess.mp4")),
     )
     args = parser.parse_args()
     if args.max_frames < 1:
