@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 
 import h5py
@@ -173,6 +174,24 @@ def plot_peak_overlays(
     print(f"Wrote {out_heatmap.resolve()}")
 
 
+def write_peaks_csv(
+    dest: Path,
+    *,
+    x: np.ndarray,
+    t: np.ndarray,
+    intensity: np.ndarray,
+) -> None:
+    """One row per detection: ``x,t,intensity`` (sorted by ``t`` then ``x``)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    order = np.lexsort((x, t))
+    with dest.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["x", "t", "intensity"])
+        for i in order:
+            w.writerow([float(x[i]), int(t[i]), float(intensity[i])])
+    print(f"Wrote {dest.resolve()} — {len(t)} rows")
+
+
 def write_peaks_h5(
     dest: Path,
     peaks: np.ndarray,
@@ -199,7 +218,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             f"SciPy peaks on `{RESIDUAL_SQ_GAUSSIAN_DATASET}` "
-            "in *_preprocessed.h5 — scatter overlays matching nsm-preprocess."
+            "in *_preprocessed.h5 — scatter overlays matching nsm-preprocess. "
+            "Also writes <stem>_peaks.csv (x,t,intensity only; trajectories are nsm-track)."
         )
     )
     parser.add_argument(
@@ -216,7 +236,7 @@ def main() -> None:
         type=Path,
         default=DEFAULT_PLOTS_DIR,
         help=(
-            "Output directory for <stem>_detect.h5 plus *_detect_*.png "
+            "Output directory for <stem>_detect.h5, <stem>_peaks.csv, plus *_detect_*.png "
             f"(default: {DEFAULT_PLOTS_DIR})"
         ),
     )
@@ -264,6 +284,16 @@ def main() -> None:
         rel_prominence=float(args.rel_prominence),
         distance=int(args.distance),
     )
+
+    dest_csv = out_dir / f"{stem}_peaks.csv"
+    n = int(peaks.shape[0])
+    if n > 0:
+        inten = sq_g[pt.astype(np.int64), px.astype(np.int64)].astype(np.float64, copy=False)
+        write_peaks_csv(
+            dest_csv, x=px.astype(np.float64), t=pt.astype(np.int64), intensity=inten
+        )
+    else:
+        write_peaks_csv(dest_csv, x=np.array([]), t=np.array([], dtype=np.int64), intensity=np.array([]))
 
     pk_meta = (
         f"{len(peaks)} peaks • scipy find_peaks "

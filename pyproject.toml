@@ -20,6 +20,7 @@ nsm-crop = "nsm.crop:main"
 nsm-raw = "nsm.plot_raw:main"
 nsm-preprocess = "nsm.preprocess:main"
 nsm-detect = "nsm.peak_detect:main"
+nsm-track = "nsm.track:main"
 
 [build-system]
 requires = ["hatchling"]
