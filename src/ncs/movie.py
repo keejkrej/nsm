@@ -12,7 +12,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from ncs.data import DATASET_DEFAULT, MAX_TIME_SAMPLES, discover_h5_files, load_kymograph, output_path_for_file
+from ncs.data import (
+    DATASET_DEFAULT,
+    FIGSIZE_INCHES,
+    MAX_TIME_SAMPLES,
+    discover_h5_files,
+    load_kymograph,
+    output_path_for_file,
+)
 from ncs.statistics import temporal_median_background
 
 # Even, div by 16 — avoids libx264 / imageio padding surprises.
@@ -80,7 +87,7 @@ def _make_movie_frames_line(
     xs = np.arange(x_size, dtype=np.float32)
     frames_rgb: list[np.ndarray] = []
 
-    fig, ax = plt.subplots(figsize=(10.0, 4.0))
+    fig, ax = plt.subplots(figsize=FIGSIZE_INCHES)
     fig.subplots_adjust(left=0.09, bottom=0.17, top=0.78, right=0.96)
 
     try:

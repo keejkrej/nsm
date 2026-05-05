@@ -17,6 +17,9 @@ MAX_TIME_SAMPLES = 1024
 IMAGE_CMAP = "hot"
 """Default ``matplotlib`` colormap for kymograph-style ``imshow`` panels."""
 
+FIGSIZE_INCHES: tuple[float, float] = (10.0, 10.0)
+"""Matplotlib figure (width, height) in inches — shared square canvas for all NCS plots."""
+
 
 def load_kymograph(
     path: Path,

@@ -11,6 +11,7 @@ import numpy as np
 
 from ncs.data import (
     DATASET_DEFAULT,
+    FIGSIZE_INCHES,
     IMAGE_CMAP,
     MAX_TIME_SAMPLES,
     discover_h5_files,
@@ -38,7 +39,7 @@ def _plot(paths: list[Path], out_path: Path | None, show: bool, dataset_name: st
             path, dataset_name=dataset_name
         )
         display = arr.T
-        fig, ax = plt.subplots(figsize=(10, 10))
+        fig, ax = plt.subplots(figsize=FIGSIZE_INCHES)
         im = ax.imshow(
             display,
             aspect="equal",

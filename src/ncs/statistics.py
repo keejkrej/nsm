@@ -9,7 +9,13 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ncs.data import DATASET_DEFAULT, discover_h5_files, load_kymograph, output_path_for_file
+from ncs.data import (
+    DATASET_DEFAULT,
+    FIGSIZE_INCHES,
+    discover_h5_files,
+    load_kymograph,
+    output_path_for_file,
+)
 
 
 def temporal_percentile_band_across_time(
@@ -33,13 +39,6 @@ def temporal_median_background(arr: np.ndarray) -> np.ndarray:
     return np.median(arr.astype(np.float32, copy=False), axis=0).astype(np.float32)
 
 
-def temporal_mean_background(arr: np.ndarray) -> np.ndarray:
-    """For each position x, mean intensity over time. ``arr`` is (T, X)."""
-    if arr.ndim != 2:
-        raise ValueError(f"expected 2D (T, X), got shape {arr.shape}")
-    return np.mean(arr.astype(np.float32, copy=False), axis=0).astype(np.float32)
-
-
 def _plot_statistics_panel(
     path: Path,
     *,
@@ -53,7 +52,7 @@ def _plot_statistics_panel(
     p10, p90 = temporal_percentile_band_across_time(arr, 10.0, 90.0)
 
     x = np.arange(med.shape[0], dtype=np.float32)
-    fig, ax = plt.subplots(figsize=(9, 9))
+    fig, ax = plt.subplots(figsize=FIGSIZE_INCHES)
     ax.fill_between(
         x,
         p1,
