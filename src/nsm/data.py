@@ -20,6 +20,12 @@ IMAGE_CMAP = "hot"
 FIGSIZE_INCHES: tuple[float, float] = (10.0, 10.0)
 """Matplotlib figure (width, height) in inches — shared square canvas for all NSM plots."""
 
+DEFAULT_DATA_ROOT = Path.home() / "data" / "nsm"
+"""Default folder that contains ``*.h5`` (CLI ``directory`` default)."""
+
+DEFAULT_PLOTS_DIR = DEFAULT_DATA_ROOT / "plots"
+"""Default output directory for PNG/MP4 artifacts."""
+
 
 def load_kymograph(
     path: Path,

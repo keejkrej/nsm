@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -14,6 +13,8 @@ from PIL import Image
 
 from nsm.data import (
     DATASET_DEFAULT,
+    DEFAULT_DATA_ROOT,
+    DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
     MAX_TIME_SAMPLES,
     discover_h5_files,
@@ -118,9 +119,9 @@ def _movie_argparser(description: str, default_output: Path) -> argparse.Argumen
     p.add_argument(
         "directory",
         nargs="?",
-        default=os.path.expanduser("~/data/nsm"),
+        default=DEFAULT_DATA_ROOT,
         type=Path,
-        help="Directory containing .h5 files (default: ~/data/nsm)",
+        help=f"Directory containing .h5 files (default: {DEFAULT_DATA_ROOT})",
     )
     p.add_argument(
         "-o",
@@ -195,7 +196,7 @@ def main_movie_raw() -> None:
             "Animate raw intensity vs position-x for each loaded time slice "
             f"(≤{MAX_TIME_SAMPLES} frames)."
         ),
-        Path(os.path.expanduser("~/data/nsm/plots/nsm_movie_raw.mp4")),
+        DEFAULT_PLOTS_DIR / "nsm_movie_raw.mp4",
     )
     args = parser.parse_args()
     if args.max_frames < 1:
@@ -224,7 +225,7 @@ def main_movie_preprocess() -> None:
             "Animate (raw − temporal median per column) vs x for each time slice "
             f"(≤{MAX_TIME_SAMPLES} frames)."
         ),
-        Path(os.path.expanduser("~/data/nsm/plots/nsm_movie_preprocess.mp4")),
+        DEFAULT_PLOTS_DIR / "nsm_movie_preprocess.mp4",
     )
     args = parser.parse_args()
     if args.max_frames < 1:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -11,6 +10,8 @@ import numpy as np
 
 from nsm.data import (
     DATASET_DEFAULT,
+    DEFAULT_DATA_ROOT,
+    DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
     IMAGE_CMAP,
     MAX_TIME_SAMPLES,
@@ -77,17 +78,17 @@ def main() -> None:
     parser.add_argument(
         "directory",
         nargs="?",
-        default=os.path.expanduser("~/data/nsm"),
+        default=DEFAULT_DATA_ROOT,
         type=Path,
-        help="Directory containing .h5 files (default: ~/data/nsm)",
+        help=f"Directory containing .h5 files (default: {DEFAULT_DATA_ROOT})",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=Path(os.path.expanduser("~/data/nsm/plots/nsm_kymographs.png")),
+        default=DEFAULT_PLOTS_DIR / "nsm_kymographs.png",
         help=(
-            "PNG output path (default: ~/data/nsm/plots/nsm_kymographs.png). "
+            f"PNG output path (default: {DEFAULT_PLOTS_DIR / 'nsm_kymographs.png'}). "
             "With multiple .h5 files, writes stem_<file>.png in the same directory."
         ),
     )
