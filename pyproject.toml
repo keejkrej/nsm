@@ -12,6 +12,7 @@ dependencies = [
     "imageio-ffmpeg>=0.5",
     "matplotlib>=3.8",
     "numpy>=2",
+    "PyWavelets>=1.6",
 ]
 
 [project.scripts]

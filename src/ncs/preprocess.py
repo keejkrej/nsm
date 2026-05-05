@@ -1,4 +1,4 @@
-"""Preprocess views: difference and ratio vs median — line, spectrum, kymograph each."""
+"""Preprocess views: difference and (ratio − 1) vs median — line plot and kymograph each."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pywt
 
 from ncs.data import (
     DATASET_DEFAULT,
@@ -29,14 +30,15 @@ def subtract_background(arr: np.ndarray, background: np.ndarray) -> np.ndarray:
     return arr - background
 
 
-def ratio_to_median(arr: np.ndarray, median: np.ndarray) -> np.ndarray:
-    """Per-column ``raw / median`` with floors to avoid division by tiny values."""
+def ratio_minus_one_to_median(arr: np.ndarray, median: np.ndarray) -> np.ndarray:
+    """Per-column ``(raw / median) - 1`` with a floor on median to avoid huge quotients."""
     if median.shape != (arr.shape[1],):
         raise ValueError(
             f"median length {median.shape} != width {arr.shape[1]}"
         )
     m = np.maximum(median.astype(np.float64), 1e-12)
-    return (arr.astype(np.float64) / m).astype(np.float32)
+    r = arr.astype(np.float64) / m
+    return (r - 1.0).astype(np.float32)
 
 
 def contrast_limits(a: np.ndarray, lo: float = 2.0, hi: float = 98.0) -> tuple[float, float]:
@@ -44,24 +46,35 @@ def contrast_limits(a: np.ndarray, lo: float = 2.0, hi: float = 98.0) -> tuple[f
     return float(vmin), float(vmax)
 
 
-def _spatial_rfft_spectrum_along_x(
-    row_tx: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Real FFT magnitude of one time slice vs position (``length X``).
+def wavelet_lowpass_along_x(
+    arr: np.ndarray,
+    *,
+    wavelet: str = "db4",
+    level: int = 4,
+) -> tuple[np.ndarray, int]:
+    """1-D approximation-only low-pass along axis **x** for each time row (detail coeffs zeroed).
 
-    Mean is removed along x before the transform. Returns ``(freq_cycles_per_px, magnitude)``.
+    Assumes ``arr`` is shaped ``(time, x)``. No smoothing along time.
+
+    Returns the filtered array and the decomposition depth used (0 if the input
+    was returned unchanged).
     """
-    x = np.asarray(row_tx, dtype=np.float64)
-    x = x - np.mean(x)
-    n = x.shape[0]
-    if n < 2:
-        f = np.array([0.0], dtype=np.float64)
-        m = np.array([np.abs(x[0])], dtype=np.float64)
-        return f, m
-    spec = np.fft.rfft(x)
-    mag = np.abs(spec).astype(np.float64)
-    freqs = np.fft.rfftfreq(n, d=1.0)
-    return freqs.astype(np.float64), mag
+    x = np.asarray(arr, dtype=np.float64)
+    if x.ndim != 2:
+        raise ValueError(f"expected 2-D (time, x) array, got shape {x.shape}")
+    n_time, width = x.shape
+    w = pywt.Wavelet(wavelet)
+    max_level = pywt.dwt_max_level(int(width), w)
+    if max_level < 1:
+        return arr.astype(np.float32, copy=False), 0
+    lvl = max(1, min(int(level), max_level))
+    out = np.empty_like(x)
+    for i in range(n_time):
+        coeffs = pywt.wavedec(x[i], wavelet, level=lvl, mode="symmetric")
+        coeffs_lp = [coeffs[0]] + [np.zeros_like(c) for c in coeffs[1:]]
+        rec = pywt.waverec(coeffs_lp, wavelet, mode="symmetric")
+        out[i] = rec[:width]
+    return out.astype(np.float32), lvl
 
 
 def _prepare_imshow(arr_td: np.ndarray) -> tuple[np.ndarray, float, float]:
@@ -72,21 +85,42 @@ def _prepare_imshow(arr_td: np.ndarray) -> tuple[np.ndarray, float, float]:
 
 def _preprocess_output_paths(
     template: Path, h5_path: Path, n_files: int
-) -> tuple[tuple[Path, Path, Path], tuple[Path, Path, Path]]:
-    """Difference and ratio triples: (intensity, spectrum, heatmap) each."""
+) -> tuple[
+    tuple[Path, Path],
+    tuple[Path, Path],
+    tuple[Path, Path],
+    tuple[Path, Path],
+    tuple[Path, Path],
+    tuple[Path, Path],
+]:
+    """(diff, ratio, diff LP, ratio LP, diff residual, ratio residual); each (intensity, heatmap)."""
     base = output_path_for_file(template, h5_path, n_files)
     stem, suf = base.stem, base.suffix
     diff = (
         base.with_name(f"{stem}_intensity{suf}"),
-        base.with_name(f"{stem}_spectrum{suf}"),
         base.with_name(f"{stem}_heatmap{suf}"),
     )
     rat = (
         base.with_name(f"{stem}_ratio_intensity{suf}"),
-        base.with_name(f"{stem}_ratio_spectrum{suf}"),
         base.with_name(f"{stem}_ratio_heatmap{suf}"),
     )
-    return diff, rat
+    diff_lp = (
+        base.with_name(f"{stem}_lp_intensity{suf}"),
+        base.with_name(f"{stem}_lp_heatmap{suf}"),
+    )
+    rat_lp = (
+        base.with_name(f"{stem}_ratio_lp_intensity{suf}"),
+        base.with_name(f"{stem}_ratio_lp_heatmap{suf}"),
+    )
+    diff_res = (
+        base.with_name(f"{stem}_lpdiff_intensity{suf}"),
+        base.with_name(f"{stem}_lpdiff_heatmap{suf}"),
+    )
+    rat_res = (
+        base.with_name(f"{stem}_ratio_lpdiff_intensity{suf}"),
+        base.with_name(f"{stem}_ratio_lpdiff_heatmap{suf}"),
+    )
+    return diff, rat, diff_lp, rat_lp, diff_res, rat_res
 
 
 def _plot_preprocess_variant(
@@ -95,10 +129,12 @@ def _plot_preprocess_variant(
     meta: str,
     corrected: np.ndarray,
     out_intensity: Path | None,
-    out_spectrum: Path | None,
     out_heatmap: Path | None,
     show: bool,
     ratio_mode: bool,
+    wavelet_lowpass: bool = False,
+    wavelet_desc: str | None = None,
+    residual_vs_lowpass: bool = False,
 ) -> None:
     row0 = corrected[0].astype(np.float32, copy=False)
     xs = np.arange(row0.shape[0], dtype=np.float32)
@@ -107,24 +143,36 @@ def _plot_preprocess_variant(
     if ymax <= ymin:
         ymax = ymin + 1e-6
 
-    freqs, mag = _spatial_rfft_spectrum_along_x(row0)
-
     disp, _, _ = _prepare_imshow(corrected)
 
     if ratio_mode:
-        ylab = "raw / temporal median"
-        heat_title = "raw / temporal median (per column)"
-        line_title = f"{path.name}\nfirst frame (t=0): {ylab} vs x • {meta}"
-        spec_title = f"{path.name}\nfirst frame (t=0): spatial spectrum of ratio slice • {meta}"
-        ref_y = 1.0
-    else:
-        ylab = "raw − temporal median"
-        heat_title = "raw − temporal median (per column)"
-        line_title = f"{path.name}\nfirst frame (t=0): {ylab} vs x • {meta}"
-        spec_title = (
-            f"{path.name}\nfirst frame (t=0): spatial spectrum of difference slice • {meta}"
-        )
+        base_ylab = "(raw / temporal median) − 1"
+        base_heat = "(raw / temporal median) − 1 (per column)"
         ref_y = 0.0
+    else:
+        base_ylab = "raw − temporal median"
+        base_heat = "raw − temporal median (per column)"
+        ref_y = 0.0
+
+    if residual_vs_lowpass:
+        if not wavelet_desc:
+            raise ValueError("residual_vs_lowpass requires wavelet_desc")
+        ylab = f"{base_ylab} − LP"
+        heat_title = f"{base_heat} − wavelet LP along x"
+        prefix = f"preprocessed − wavelet LP ({wavelet_desc})\n"
+        line_title = f"{path.name}\n{prefix}first frame (t=0): {ylab} vs x • {meta}"
+        map_title = f"{prefix}{heat_title}\n{meta}"
+    elif wavelet_lowpass and wavelet_desc:
+        ylab = base_ylab
+        heat_title = base_heat
+        prefix = f"wavelet low-pass along x ({wavelet_desc})\n"
+        line_title = f"{path.name}\n{prefix}first frame (t=0): {ylab} vs x • {meta}"
+        map_title = f"{prefix}{heat_title}\n{meta}"
+    else:
+        ylab = base_ylab
+        heat_title = base_heat
+        line_title = f"{path.name}\nfirst frame (t=0): {ylab} vs x • {meta}"
+        map_title = f"{heat_title}\n{meta}"
 
     fig_line = plt.figure(figsize=FIGSIZE_INCHES, layout="constrained")
     ax_line = fig_line.subplots()
@@ -144,24 +192,6 @@ def _plot_preprocess_variant(
     if not show:
         plt.close(fig_line)
 
-    fig_spec = plt.figure(figsize=FIGSIZE_INCHES, layout="constrained")
-    ax_spec = fig_spec.subplots()
-    mag_plot = np.maximum(mag, 1e-20)
-    ax_spec.plot(freqs, mag_plot, color="C1", linewidth=0.9)
-    ax_spec.set_xlim(0.0, float(freqs[-1]) if freqs.size else 1.0)
-    ax_spec.set_xlabel("spatial frequency (cycles / pixel)")
-    ax_spec.set_ylabel("|FFT| (mean removed along x)")
-    ax_spec.set_yscale("log")
-    ax_spec.grid(True, alpha=0.35, which="both")
-    ax_spec.set_title(spec_title)
-
-    if out_spectrum is not None:
-        out_spectrum.parent.mkdir(parents=True, exist_ok=True)
-        fig_spec.savefig(out_spectrum, dpi=150)
-        print(f"Wrote {out_spectrum.resolve()}")
-    if not show:
-        plt.close(fig_spec)
-
     fig_map = plt.figure(figsize=FIGSIZE_INCHES, layout="constrained")
     ax_map = fig_map.subplots()
     im = ax_map.imshow(
@@ -172,7 +202,7 @@ def _plot_preprocess_variant(
         interpolation="nearest",
     )
     fig_map.colorbar(im, ax=ax_map, fraction=0.046, pad=0.04)
-    ax_map.set_title(f"{heat_title}\n{meta}")
+    ax_map.set_title(map_title)
     ax_map.set_xlabel("time (axis 0)")
     ax_map.set_ylabel("position (pixels)")
 
@@ -187,15 +217,36 @@ def _plot_preprocess_variant(
 def _plot_preprocess_outputs(
     path: Path,
     *,
-    out_diff: tuple[Path | None, Path | None, Path | None],
-    out_ratio: tuple[Path | None, Path | None, Path | None],
+    out_diff: tuple[Path | None, Path | None],
+    out_ratio: tuple[Path | None, Path | None],
+    out_diff_lp: tuple[Path | None, Path | None],
+    out_ratio_lp: tuple[Path | None, Path | None],
+    out_diff_res: tuple[Path | None, Path | None],
+    out_ratio_res: tuple[Path | None, Path | None],
     show: bool,
     dataset_name: str,
+    wavelet: str,
+    wavelet_level: int,
 ) -> None:
     arr, full_shape = load_kymograph(path, dataset_name=dataset_name)
     median = temporal_median_background(arr)
     corrected_diff = subtract_background(arr, median)
-    corrected_ratio = ratio_to_median(arr, median)
+    corrected_ratio = ratio_minus_one_to_median(arr, median)
+
+    lp_diff, lvl_d = wavelet_lowpass_along_x(
+        corrected_diff, wavelet=wavelet, level=wavelet_level
+    )
+    lp_ratio, _ = wavelet_lowpass_along_x(
+        corrected_ratio, wavelet=wavelet, level=wavelet_level
+    )
+    wavelet_caption = (
+        f"{wavelet}, level {lvl_d}, axis=x"
+        if lvl_d
+        else f"{wavelet}, axis=x (no decomposition; data unchanged)"
+    )
+
+    res_diff = corrected_diff.astype(np.float32, copy=False) - lp_diff
+    res_ratio = corrected_ratio.astype(np.float32, copy=False) - lp_ratio
 
     meta = f"loaded array {tuple(arr.shape)} • on-disk {full_shape}"
 
@@ -204,8 +255,7 @@ def _plot_preprocess_outputs(
         meta=meta,
         corrected=corrected_diff,
         out_intensity=out_diff[0],
-        out_spectrum=out_diff[1],
-        out_heatmap=out_diff[2],
+        out_heatmap=out_diff[1],
         show=show,
         ratio_mode=False,
     )
@@ -214,18 +264,61 @@ def _plot_preprocess_outputs(
         meta=meta,
         corrected=corrected_ratio,
         out_intensity=out_ratio[0],
-        out_spectrum=out_ratio[1],
-        out_heatmap=out_ratio[2],
+        out_heatmap=out_ratio[1],
         show=show,
         ratio_mode=True,
+    )
+    _plot_preprocess_variant(
+        path,
+        meta=meta,
+        corrected=lp_diff,
+        out_intensity=out_diff_lp[0],
+        out_heatmap=out_diff_lp[1],
+        show=show,
+        ratio_mode=False,
+        wavelet_lowpass=True,
+        wavelet_desc=wavelet_caption,
+    )
+    _plot_preprocess_variant(
+        path,
+        meta=meta,
+        corrected=lp_ratio,
+        out_intensity=out_ratio_lp[0],
+        out_heatmap=out_ratio_lp[1],
+        show=show,
+        ratio_mode=True,
+        wavelet_lowpass=True,
+        wavelet_desc=wavelet_caption,
+    )
+    _plot_preprocess_variant(
+        path,
+        meta=meta,
+        corrected=res_diff,
+        out_intensity=out_diff_res[0],
+        out_heatmap=out_diff_res[1],
+        show=show,
+        ratio_mode=False,
+        residual_vs_lowpass=True,
+        wavelet_desc=wavelet_caption,
+    )
+    _plot_preprocess_variant(
+        path,
+        meta=meta,
+        corrected=res_ratio,
+        out_intensity=out_ratio_res[0],
+        out_heatmap=out_ratio_res[1],
+        show=show,
+        ratio_mode=True,
+        residual_vs_lowpass=True,
+        wavelet_desc=wavelet_caption,
     )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Six PNGs per file: difference (raw − median) and ratio (raw / median), each with "
-            "t=0 vs x, spatial FFT of that slice, and full kymograph."
+            "Twelve PNGs per file: difference and excess ratio ((raw / median) − 1), each with "
+            "raw, x-axis wavelet low-pass, and preproc−LP residual — t=0 line and kymograph each."
         )
     )
     parser.add_argument(
@@ -241,11 +334,24 @@ def main() -> None:
         type=Path,
         default=Path(os.path.expanduser("~/data/ncs/plots/ncs_preprocess.png")),
         help=(
-            "Base PNG path; writes difference: <stem>_{intensity,spectrum,heatmap}.png and "
-            "ratio: <stem>_ratio_{intensity,spectrum,heatmap}.png "
-            "(default: ~/data/ncs/plots/ncs_preprocess.png). "
-            "Several .h5 files: stem_<filestem>_… for each."
+            "Base PNG path; per .h5 writes diff & ratio each as intensity+heatmap for: "
+            "raw, wavelet LP along x, and residual (preproc − LP) — filenames "
+            "<stem>_{lp,lpdiff}_{intensity,heatmap}.png and "
+            "<stem>_ratio_{lp,lpdiff}_{intensity,heatmap}.png. "
+            "(default: ~/data/ncs/plots/ncs_preprocess.png). Multi-file: stem_<filestem>_…."
         ),
+    )
+    parser.add_argument(
+        "--wavelet",
+        type=str,
+        default="db4",
+        help="PyWavelets name; 1-D transform along **x** per time row (default: db4)",
+    )
+    parser.add_argument(
+        "--wavelet-level",
+        type=int,
+        default=4,
+        help="1-D decomposition depth along x — higher = coarser along position (clamped; default: 4)",
     )
     parser.add_argument(
         "--dataset",
@@ -268,16 +374,24 @@ def main() -> None:
 
     for path in paths:
         if template is None:
-            out_d = (None, None, None)
-            out_r = (None, None, None)
+            empty = (None, None)
+            out_d = out_r = out_d_lp = out_r_lp = out_d_res = out_r_res = empty
         else:
-            out_d, out_r = _preprocess_output_paths(template, path, n_files)
+            out_d, out_r, out_d_lp, out_r_lp, out_d_res, out_r_res = (
+                _preprocess_output_paths(template, path, n_files)
+            )
         _plot_preprocess_outputs(
             path,
             out_diff=out_d,
             out_ratio=out_r,
+            out_diff_lp=out_d_lp,
+            out_ratio_lp=out_r_lp,
+            out_diff_res=out_d_res,
+            out_ratio_res=out_r_res,
             show=args.show or args.no_save,
             dataset_name=args.dataset,
+            wavelet=args.wavelet,
+            wavelet_level=args.wavelet_level,
         )
 
     if args.show or args.no_save:
