@@ -88,7 +88,7 @@ def squared_residual_gaussian(
     *,
     gaussian_sigma: float = RESIDUAL_SQ_GAUSSIAN_SIGMA,
 ) -> np.ndarray:
-    """Squared wavelet-detail kymograph, then Gaussian along **x** (HDF5 panels, movies, peaks)."""
+    """Squared wavelet-detail kymograph, then Gaussian along **x** (HDF5 panels and peaks)."""
     sq = np.square(np.asarray(wavelet_detail_tx, dtype=np.float32))
     return gaussian_smooth_along_x(sq, sigma=float(gaussian_sigma))
 

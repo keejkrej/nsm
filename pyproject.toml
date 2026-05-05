@@ -8,8 +8,6 @@ description = "Visualize NSM HDF5 datasets"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "h5py>=3.11",
-    "imageio>=2.33",
-    "imageio-ffmpeg>=0.5",
     "matplotlib>=3.8",
     "numpy>=2",
     "pywavelets>=1.5",
@@ -22,9 +20,6 @@ nsm-crop = "nsm.crop:main"
 nsm-raw = "nsm.plot_raw:main"
 nsm-preprocess = "nsm.preprocess:main"
 nsm-detect = "nsm.peak_detect:main"
-nsm-movie-raw = "nsm.line_movie:main_movie_raw"
-nsm-movie-preprocess = "nsm.line_movie:main_movie_preprocess"
-nsm-movie-preprocess-sq = "nsm.line_movie:main_movie_preprocess_sq"
 
 [build-system]
 requires = ["hatchling"]

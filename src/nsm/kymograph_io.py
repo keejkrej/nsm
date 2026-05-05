@@ -1,4 +1,4 @@
-"""HDF5 kymograph I/O helpers and filesystem paths for PNG/MP4 outputs."""
+"""HDF5 kymograph I/O helpers and filesystem paths for PNG outputs."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ RESIDUAL_SQ_GAUSSIAN_DATASET = "residual_sq_gaussian"
 """Gaussian smoothing along **x** of squared wavelet-detail kymograph."""
 
 DEFAULT_LEADING_TIME_ROWS = 1024
-"""Default leading time rows kept by ``nsm-crop`` and used as ``--max-frames`` defaults in movies."""
+"""Default leading time rows kept by ``nsm-crop`` when trimming long kymographs."""
 
 IMAGE_CMAP = "hot"
 """Default ``matplotlib`` colormap for kymograph-style ``imshow`` panels."""
@@ -27,7 +27,7 @@ DEFAULT_DATA_ROOT = Path.home() / "data" / "nsm"
 """Default folder that contains ``*.h5`` (CLI ``directory`` default)."""
 
 DEFAULT_PLOTS_DIR = DEFAULT_DATA_ROOT / "plots"
-"""Default output directory for PNG/MP4 artifacts."""
+"""Default output directory for PNG and derived HDF5 artifacts."""
 
 
 def load_kymograph(
@@ -84,13 +84,3 @@ def resolve_output_directory(out: Path) -> Path:
     out = out.expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
     return out
-
-
-def resolve_video_destination(out: Path, *, source_stem: str, suffix: str) -> Path:
-    """``.mp4`` / ``.gif`` → that path; otherwise treat ``out`` as a directory."""
-    out = out.expanduser().resolve()
-    if out.suffix.lower() in (".mp4", ".gif"):
-        out.parent.mkdir(parents=True, exist_ok=True)
-        return out
-    out.mkdir(parents=True, exist_ok=True)
-    return (out / f"{source_stem}{suffix}").resolve()
