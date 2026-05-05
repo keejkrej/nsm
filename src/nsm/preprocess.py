@@ -14,6 +14,7 @@ from nsm.data import (
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
     IMAGE_CMAP,
+    ILLUMINATION_DATASET,
     load_kymograph,
     resolve_output_directory,
 )
@@ -25,10 +26,6 @@ from nsm.lpdiff import (
     temporal_median_background,
     y_axis_minmax,
 )
-
-
-ILLUMINATION_DATASET = "illumination"
-"""Per-column median over time in the *_preprocessed.h5 artifact (illumination profile)."""
 
 
 def _lpdiff_png_paths(out_dir: Path, stem: str) -> tuple[Path, Path]:

@@ -11,6 +11,12 @@ import numpy as np
 DATASET_DEFAULT = "kymograph"
 """Default HDF5 dataset name for kymograph arrays."""
 
+ILLUMINATION_DATASET = "illumination"
+"""Per-column median over time in ``*_preprocessed.h5`` (illumination profile)."""
+
+PARTICLE_MASK_DATASET = "particle_mask"
+"""Binary mask (0/1) from ``nsm-detect``."""
+
 MAX_TIME_SAMPLES = 1024
 """Default leading time rows for **cropped** exports (``nsm-crop``) and movie frame caps."""
 
