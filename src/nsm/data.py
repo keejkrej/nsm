@@ -12,7 +12,7 @@ DATASET_DEFAULT = "kymograph"
 """Default HDF5 dataset name for kymograph arrays."""
 
 MAX_TIME_SAMPLES = 1024
-"""Read at most this many rows along time (axis 0); ``None`` = full time axis."""
+"""Default leading time rows for **cropped** exports (``nsm-crop``) and movie frame caps."""
 
 IMAGE_CMAP = "hot"
 """Default ``matplotlib`` colormap for kymograph-style ``imshow`` panels."""
@@ -31,11 +31,12 @@ def load_kymograph(
     path: Path,
     *,
     dataset_name: str = DATASET_DEFAULT,
-    max_time: int | None = MAX_TIME_SAMPLES,
+    max_time: int | None = None,
 ) -> tuple[np.ndarray, tuple[int, int]]:
     """Load kymograph as float32 ``(T, X)``. Returns ``(array, on-disk dataset shape)``.
 
-    Reads the **leading** ``min(file_T, max_time)`` rows along time (no striding).
+    With ``max_time`` set, reads the **leading** ``min(file_T, max_time)`` rows (no striding).
+    With ``max_time=None`` (default), loads the full time axis.
     """
     with h5py.File(path, "r") as f:
         if dataset_name not in f:
@@ -63,3 +64,29 @@ def output_path_for_file(template: Path, h5_path: Path, n_files: int) -> Path:
     if n_files == 1:
         return template
     return template.with_name(f"{template.stem}_{h5_path.stem}{template.suffix}")
+
+
+def resolve_png_destination(out: Path, *, source_stem: str, filename: str) -> Path:
+    """Directory → ``out / filename``; path ending in ``.png`` → that file (parent created)."""
+    out = out.expanduser().resolve()
+    if out.suffix.lower() == ".png":
+        out.parent.mkdir(parents=True, exist_ok=True)
+        return out
+    out.mkdir(parents=True, exist_ok=True)
+    return (out / filename).resolve()
+
+
+def resolve_output_directory(out: Path) -> Path:
+    out = out.expanduser().resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def resolve_video_destination(out: Path, *, source_stem: str, suffix: str) -> Path:
+    """``.mp4`` / ``.gif`` → that path; otherwise treat ``out`` as a directory."""
+    out = out.expanduser().resolve()
+    if out.suffix.lower() in (".mp4", ".gif"):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        return out
+    out.mkdir(parents=True, exist_ok=True)
+    return (out / f"{source_stem}{suffix}").resolve()

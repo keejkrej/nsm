@@ -1,38 +1,64 @@
-"""Preprocess pipeline: temporal median subtract + wavelet LP along x; lpdiff PNGs only."""
+"""Preprocess: median-subtracted HDF5 (+ illumination median profile) + lpdiff PNGs."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
+import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
 from nsm.data import (
     DATASET_DEFAULT,
-    DEFAULT_DATA_ROOT,
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
     IMAGE_CMAP,
-    discover_h5_files,
     load_kymograph,
-    output_path_for_file,
+    resolve_output_directory,
 )
 from nsm.lpdiff import (
     equidistant_time_indices,
     kymograph_clip_for_imshow,
     lpdiff_residual,
+    subtract_background,
+    temporal_median_background,
     y_axis_minmax,
 )
 
 
-def _lpdiff_output_paths(template: Path, h5_path: Path, n_files: int) -> tuple[Path, Path]:
+ILLUMINATION_DATASET = "illumination"
+"""Per-column median over time in the *_preprocessed.h5 artifact (illumination profile)."""
+
+
+def _lpdiff_png_paths(out_dir: Path, stem: str) -> tuple[Path, Path]:
     """``lpdiff`` = preprocessed minus wavelet LP (along x); output PNG pair."""
-    base = output_path_for_file(template, h5_path, n_files)
-    stem, suf = base.stem, base.suffix
+    suf = ".png"
     return (
-        base.with_name(f"{stem}_lpdiff_intensity{suf}"),
-        base.with_name(f"{stem}_lpdiff_heatmap{suf}"),
+        out_dir / f"{stem}_lpdiff_intensity{suf}",
+        out_dir / f"{stem}_lpdiff_heatmap{suf}",
+    )
+
+
+def _write_preprocessed_h5(
+    path: Path,
+    *,
+    preprocessed: np.ndarray,
+    illumination: np.ndarray,
+    dataset_name: str,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(path, "w") as fw:
+        fw.create_dataset(
+            dataset_name, data=preprocessed.astype(np.float32, copy=False)
+        )
+        fw.create_dataset(
+            ILLUMINATION_DATASET,
+            data=illumination.astype(np.float32, copy=False),
+        )
+    print(
+        f"Wrote {path.resolve()} — {dataset_name!r} (median-subtracted), "
+        f"{ILLUMINATION_DATASET!r} (per-x median over t)"
     )
 
 
@@ -118,19 +144,22 @@ def _plot_lpdiff(
 def _plot_preprocess_outputs(
     path: Path,
     *,
+    arr: np.ndarray | None,
+    disk_shape: tuple[int, int] | None,
     out_lpdiff: tuple[Path | None, Path | None],
     show: bool,
     dataset_name: str,
     wavelet: str,
     wavelet_level: int,
 ) -> None:
-    arr, full_shape = load_kymograph(path, dataset_name=dataset_name)
+    if arr is None or disk_shape is None:
+        arr, disk_shape = load_kymograph(path, dataset_name=dataset_name)
 
     res, smooth_caption = lpdiff_residual(
         arr, wavelet=wavelet, wavelet_level=wavelet_level
     )
 
-    meta = f"loaded array {tuple(arr.shape)} • on-disk {full_shape}"
+    meta = f"loaded array {tuple(arr.shape)} • on-disk {disk_shape}"
 
     _plot_lpdiff(
         path,
@@ -146,28 +175,22 @@ def _plot_preprocess_outputs(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Two PNGs per file: (preproc − wavelet LP along x) — kymograph and line panel "
-            "(up to 5 equidistant time slices, distinct colors). "
-            "Temporal median subtraction + wavelet low-pass; only *_lpdiff_* outputs."
+            "One input .h5 (full time axis): writes <stem>_preprocessed.h5 with the "
+            "median-subtracted kymograph, per-x temporal median as illumination, "
+            "plus two lpdiff PNGs."
         )
     )
     parser.add_argument(
-        "directory",
-        nargs="?",
-        default=DEFAULT_DATA_ROOT,
+        "h5_path",
         type=Path,
-        help=f"Directory containing .h5 files (default: {DEFAULT_DATA_ROOT})",
+        help="Input .h5 (e.g. cropped file from nsm-crop)",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=DEFAULT_PLOTS_DIR / "nsm_preprocess.png",
-        help=(
-            "Base PNG path; per .h5 writes only <stem>_lpdiff_{intensity,heatmap}.png "
-            f"(default: {DEFAULT_PLOTS_DIR / 'nsm_preprocess.png'}). "
-            "Multi-file: stem_<filestem>_…."
-        ),
+        default=DEFAULT_PLOTS_DIR,
+        help=f"Output directory (default: {DEFAULT_PLOTS_DIR})",
     )
     parser.add_argument(
         "--wavelet",
@@ -191,32 +214,52 @@ def main() -> None:
     parser.add_argument(
         "--no-save",
         action="store_true",
-        help="Do not write PNG (use with --show)",
+        help="Do not write PNG or preprocessed .h5 (use with --show)",
     )
 
     args = parser.parse_args()
+    h5_path = args.h5_path.expanduser().resolve()
+    if not h5_path.is_file():
+        raise FileNotFoundError(f"not a file: {h5_path}")
+
     if not args.no_save:
         print(
-            "nsm-preprocess: lpdiff PNGs only (2 per .h5); temporal median + wavelet LP (x)."
+            "nsm-preprocess: preprocessed .h5 (kymograph + illumination median) + "
+            "2× lpdiff PNG (wavelet LP along x)."
         )
-    data_dir = args.directory.expanduser().resolve()
-    paths = discover_h5_files(data_dir)
-    n_files = len(paths)
-    template = None if args.no_save else args.output.expanduser()
 
-    for path in paths:
-        if template is None:
-            out_lp = (None, None)
-        else:
-            out_lp = _lpdiff_output_paths(template, path, n_files)
-        _plot_preprocess_outputs(
-            path,
-            out_lpdiff=out_lp,
-            show=args.show or args.no_save,
+    out_dir: Path | None = None if args.no_save else resolve_output_directory(args.output)
+    stem = h5_path.stem
+    arr0: np.ndarray | None = None
+    disk_shape0: tuple[int, int] | None = None
+    if out_dir is not None:
+        pre_h5 = out_dir / f"{stem}_preprocessed.h5"
+        arr0, disk_shape0 = load_kymograph(h5_path, dataset_name=args.dataset)
+        illumination = temporal_median_background(arr0)
+        pre = subtract_background(arr0, illumination)
+        _write_preprocessed_h5(
+            pre_h5,
+            preprocessed=pre,
+            illumination=illumination,
             dataset_name=args.dataset,
-            wavelet=args.wavelet,
-            wavelet_level=args.wavelet_level,
         )
+
+    out_lp: tuple[Path | None, Path | None]
+    if out_dir is None:
+        out_lp = (None, None)
+    else:
+        out_lp = _lpdiff_png_paths(out_dir, stem)
+
+    _plot_preprocess_outputs(
+        h5_path,
+        arr=arr0,
+        disk_shape=disk_shape0,
+        out_lpdiff=out_lp,
+        show=args.show or args.no_save,
+        dataset_name=args.dataset,
+        wavelet=args.wavelet,
+        wavelet_level=args.wavelet_level,
+    )
 
     if args.show or args.no_save:
         plt.show()

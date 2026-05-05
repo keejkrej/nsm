@@ -10,14 +10,11 @@ import numpy as np
 
 from nsm.data import (
     DATASET_DEFAULT,
-    DEFAULT_DATA_ROOT,
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
     IMAGE_CMAP,
-    MAX_TIME_SAMPLES,
-    discover_h5_files,
     load_kymograph,
-    output_path_for_file,
+    resolve_png_destination,
 )
 
 
@@ -33,36 +30,32 @@ def _load_kymograph_stretched(
     return stretched, disk_shape, tuple(arr.shape)
 
 
-def _plot(paths: list[Path], out_path: Path | None, show: bool, dataset_name: str) -> None:
-    n_files = len(paths)
-    for path in paths:
-        arr, disk_shape, loaded_shape = _load_kymograph_stretched(
-            path, dataset_name=dataset_name
-        )
-        display = arr.T
-        fig, ax = plt.subplots(figsize=FIGSIZE_INCHES)
-        im = ax.imshow(
-            display,
-            aspect="equal",
-            origin="upper",
-            cmap=IMAGE_CMAP,
-            interpolation="nearest",
-        )
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        ax.set_title(
-            f"{path.name}\nkymograph {loaded_shape} (pos×time; image transposed)\n"
-            f"on-disk {disk_shape}"
-        )
-        ax.set_xlabel("time (axis 0)")
-        ax.set_ylabel("position (pixels)")
-        fig.tight_layout()
-        if out_path is not None:
-            dest = output_path_for_file(out_path, path, n_files)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(dest, dpi=150)
-            print(f"Wrote {dest.resolve()}")
-        if not show:
-            plt.close(fig)
+def _plot(path: Path, out_path: Path | None, show: bool, dataset_name: str) -> None:
+    arr, disk_shape, loaded_shape = _load_kymograph_stretched(
+        path, dataset_name=dataset_name
+    )
+    display = arr.T
+    fig, ax = plt.subplots(figsize=FIGSIZE_INCHES)
+    im = ax.imshow(
+        display,
+        aspect="equal",
+        origin="upper",
+        cmap=IMAGE_CMAP,
+        interpolation="nearest",
+    )
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    ax.set_title(
+        f"{path.name}\nkymograph {loaded_shape} (pos×time; image transposed)\n"
+        f"on-disk {disk_shape}"
+    )
+    ax.set_xlabel("time (axis 0)")
+    ax.set_ylabel("position (pixels)")
+    fig.tight_layout()
+    if out_path is not None:
+        fig.savefig(out_path, dpi=150)
+        print(f"Wrote {out_path.resolve()}")
+    if not show:
+        plt.close(fig)
     if show:
         plt.show()
         plt.close("all")
@@ -71,25 +64,22 @@ def _plot(paths: list[Path], out_path: Path | None, show: bool, dataset_name: st
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Plot kymographs from HDF5. Loads the leading time window only "
-            f"(default {MAX_TIME_SAMPLES} rows); no subsampling."
+            "Plot one kymograph from an HDF5 file (full time axis of that file; no subsampling)."
         )
     )
     parser.add_argument(
-        "directory",
-        nargs="?",
-        default=DEFAULT_DATA_ROOT,
+        "h5_path",
         type=Path,
-        help=f"Directory containing .h5 files (default: {DEFAULT_DATA_ROOT})",
+        help="Input .h5 (e.g. from nsm-crop)",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=DEFAULT_PLOTS_DIR / "nsm_kymographs.png",
+        default=DEFAULT_PLOTS_DIR,
         help=(
-            f"PNG output path (default: {DEFAULT_PLOTS_DIR / 'nsm_kymographs.png'}). "
-            "With multiple .h5 files, writes stem_<file>.png in the same directory."
+            "Output directory, or a path ending in .png. "
+            f"Default directory: {DEFAULT_PLOTS_DIR} (writes <stem>_kymograph.png)."
         ),
     )
     parser.add_argument(
@@ -110,13 +100,21 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    data_dir = args.directory.expanduser().resolve()
+    h5_path = args.h5_path.expanduser().resolve()
+    if not h5_path.is_file():
+        raise FileNotFoundError(f"not a file: {h5_path}")
 
-    paths = discover_h5_files(data_dir)
-    out_path = None if args.no_save else args.output.expanduser()
+    if args.no_save:
+        dest: Path | None = None
+    else:
+        dest = resolve_png_destination(
+            args.output,
+            source_stem=h5_path.stem,
+            filename=f"{h5_path.stem}_kymograph.png",
+        )
     _plot(
-        paths,
-        out_path=out_path,
+        h5_path,
+        out_path=dest,
         show=args.show or args.no_save,
         dataset_name=args.dataset,
     )

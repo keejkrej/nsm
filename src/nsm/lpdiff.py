@@ -5,7 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pywt
 
-from nsm.statistics import temporal_median_background
+
+def temporal_median_background(arr: np.ndarray) -> np.ndarray:
+    """For each position x, median intensity over time. ``arr`` is (T, X)."""
+    if arr.ndim != 2:
+        raise ValueError(f"expected 2D (T, X), got shape {arr.shape}")
+    return np.median(arr.astype(np.float32, copy=False), axis=0).astype(np.float32)
 
 
 def subtract_background(arr: np.ndarray, background: np.ndarray) -> np.ndarray:

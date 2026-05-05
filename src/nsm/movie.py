@@ -13,15 +13,13 @@ from PIL import Image
 
 from nsm.data import (
     DATASET_DEFAULT,
-    DEFAULT_DATA_ROOT,
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
     MAX_TIME_SAMPLES,
-    discover_h5_files,
     load_kymograph,
-    output_path_for_file,
+    resolve_video_destination,
 )
-from nsm.lpdiff import median_subtracted, y_axis_minmax
+from nsm.lpdiff import y_axis_minmax
 
 # Output pixels: keep **square** aspect to match ``FIGSIZE_INCHES`` (line movies use a square
 # figure). A wide target (e.g. 1280×512) was squeezing the plot vertically after resize.
@@ -79,6 +77,7 @@ def _make_movie_frames_line(
     disk_shape: tuple[int, int],
     title_mode: str,
     y_axis_label: str,
+    max_frames_arg: int,
 ) -> list[np.ndarray]:
     """Animate ``data_td[t, :]`` vs **x** for ``t`` in ``[0 … cap)``, ``cap ≤ max_frames``."""
     t_max, x_size = data_td.shape
@@ -104,8 +103,8 @@ def _make_movie_frames_line(
             ax.grid(True, alpha=0.35)
             ax.set_title(
                 f"{path.name}\n{title_mode}\nframe t = {t} / {frames_cap - 1}  "
-                f"(movie uses {frames_cap} of loaded {tuple(data_td.shape)}; on-disk {disk_shape}; "
-                f"cap {MAX_TIME_SAMPLES})",
+                f"(movie uses {frames_cap} of {tuple(data_td.shape)} time rows; "
+                f"full file on-disk {disk_shape}; --max-frames cap {max_frames_arg})",
                 fontsize=10,
             )
             raw = _frame_rgb(fig, dpi)
@@ -119,18 +118,16 @@ def _make_movie_frames_line(
 def _movie_argparser(description: str, default_output: Path) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=description)
     p.add_argument(
-        "directory",
-        nargs="?",
-        default=DEFAULT_DATA_ROOT,
+        "h5_path",
         type=Path,
-        help=f"Directory containing .h5 files (default: {DEFAULT_DATA_ROOT})",
+        help="One .h5 (cropped raw for raw movie, *_preprocessed.h5 for preprocess movie)",
     )
     p.add_argument(
         "-o",
         "--output",
         type=Path,
         default=default_output,
-        help="Output video path (.mp4 or .gif)",
+        help="Output video file (.mp4 / .gif) or directory (writes <stem>_movie_*.mp4)",
     )
     p.add_argument(
         "--fps",
@@ -160,9 +157,9 @@ def _movie_argparser(description: str, default_output: Path) -> argparse.Argumen
 
 
 def _run_movie_line(
-    paths: list[Path],
+    path: Path,
     *,
-    template: Path,
+    dest: Path,
     transform: Callable[[np.ndarray], np.ndarray],
     title_mode: str,
     y_axis_label: str,
@@ -171,46 +168,46 @@ def _run_movie_line(
     dataset_name: str,
     max_frames: int,
 ) -> None:
-    n_files = len(paths)
-    for path in paths:
-        arr, disk_shape = load_kymograph(path, dataset_name=dataset_name)
-        data_td = np.asarray(transform(arr), dtype=np.float32)
-        frames = _make_movie_frames_line(
-            path,
-            dpi=dpi,
-            max_frames=max_frames,
-            data_td=data_td,
-            disk_shape=disk_shape,
-            title_mode=title_mode,
-            y_axis_label=y_axis_label,
-        )
-        dest = output_path_for_file(template, path, n_files)
-        _write_movie(frames, dest, fps=fps)
-        print(
-            f"Wrote {dest.resolve()} ({len(frames)} frames; "
-            f"loaded array {tuple(data_td.shape)}; on-disk {disk_shape})"
-        )
+    arr, disk_shape = load_kymograph(path, dataset_name=dataset_name)
+    data_td = np.asarray(transform(arr), dtype=np.float32)
+    frames = _make_movie_frames_line(
+        path,
+        dpi=dpi,
+        max_frames=max_frames,
+        data_td=data_td,
+        disk_shape=disk_shape,
+        title_mode=title_mode,
+        y_axis_label=y_axis_label,
+        max_frames_arg=max_frames,
+    )
+    _write_movie(frames, dest, fps=fps)
+    print(
+        f"Wrote {dest.resolve()} ({len(frames)} frames; "
+        f"array {tuple(data_td.shape)}; on-disk {disk_shape})"
+    )
 
 
 def main_movie_raw() -> None:
     parser = _movie_argparser(
         (
-            "Animate raw intensity vs position-x for each loaded time slice "
-            f"(≤{MAX_TIME_SAMPLES} frames)."
+            "Animate raw intensity vs position-x for each time row of one .h5 "
+            "(full file loaded; playback length capped by --max-frames, default "
+            f"{MAX_TIME_SAMPLES}). Pass the cropped HDF5 from nsm-crop."
         ),
-        DEFAULT_PLOTS_DIR / "nsm_movie_raw.mp4",
+        DEFAULT_PLOTS_DIR,
     )
     args = parser.parse_args()
     if args.max_frames < 1:
         parser.error("--max-frames must be >= 1")
 
-    data_dir = args.directory.expanduser().resolve()
-    paths = discover_h5_files(data_dir)
-    template = args.output.expanduser()
+    path = args.h5_path.expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"not a file: {path}")
+    dest = resolve_video_destination(args.output, source_stem=path.stem, suffix="_movie_raw.mp4")
 
     _run_movie_line(
-        paths,
-        template=template,
+        path,
+        dest=dest,
         transform=lambda a: a,
         title_mode="Raw intensity vs x",
         y_axis_label="intensity",
@@ -224,24 +221,27 @@ def main_movie_raw() -> None:
 def main_movie_preprocess() -> None:
     parser = _movie_argparser(
         (
-            "Animate (raw − temporal median per column) vs x for each time slice "
-            f"(≤{MAX_TIME_SAMPLES} frames)."
+            "Animate residual intensity vs x from nsm-preprocess *_preprocessed.h5 "
+            f"(loads full array; playback capped by --max-frames, default {MAX_TIME_SAMPLES})."
         ),
-        DEFAULT_PLOTS_DIR / "nsm_movie_preprocess.mp4",
+        DEFAULT_PLOTS_DIR,
     )
     args = parser.parse_args()
     if args.max_frames < 1:
         parser.error("--max-frames must be >= 1")
 
-    data_dir = args.directory.expanduser().resolve()
-    paths = discover_h5_files(data_dir)
-    template = args.output.expanduser()
+    path = args.h5_path.expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"not a file: {path}")
+    dest = resolve_video_destination(
+        args.output, source_stem=path.stem, suffix="_movie_preprocess.mp4"
+    )
 
     _run_movie_line(
-        paths,
-        template=template,
-        transform=median_subtracted,
-        title_mode="Preprocessed: raw − temporal median (per x)",
+        path,
+        dest=dest,
+        transform=lambda a: a,
+        title_mode="Preprocessed residual vs x (from file)",
         y_axis_label="residual intensity",
         fps=args.fps,
         dpi=args.dpi,

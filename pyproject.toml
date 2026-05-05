@@ -12,12 +12,12 @@ dependencies = [
     "imageio-ffmpeg>=0.5",
     "matplotlib>=3.8",
     "numpy>=2",
-    "PyWavelets>=1.5",
+    "pywavelets>=1.5",
 ]
 
 [project.scripts]
+nsm-crop = "nsm.crop:main"
 nsm-raw = "nsm.viz:main"
-nsm-statistics = "nsm.statistics:main"
 nsm-preprocess = "nsm.preprocess:main"
 nsm-movie-raw = "nsm.movie:main_movie_raw"
 nsm-movie-preprocess = "nsm.movie:main_movie_preprocess"
