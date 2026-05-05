@@ -1,4 +1,4 @@
-"""Detect peaks on illumination-rescaled ``i2_gaussian`` and write HDF5 + PNG overlays."""
+"""Detect peaks on Gaussian-smoothed squared wavelet detail and write HDF5 + PNG overlays."""
 
 from __future__ import annotations
 
@@ -13,14 +13,13 @@ from scipy.signal import find_peaks
 from nsm.kymograph_io import (
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
-    I2_GAUSSIAN_DATASET,
     IMAGE_CMAP,
+    RESIDUAL_SQ_GAUSSIAN_DATASET,
     load_kymograph,
     resolve_output_directory,
 )
 from nsm.wavelet_residual import (
-    I2_GAUSSIAN_SIGMA,
-    ILLUMINATION_GAUSSIAN_SIGMA,
+    RESIDUAL_SQ_GAUSSIAN_SIGMA,
     equidistant_time_indices,
     y_axis_minmax,
 )
@@ -66,7 +65,7 @@ def gather_peaks_rowwise(
 
 def plot_peak_overlays(
     src_name: Path,
-    i2_gauss: np.ndarray,
+    residual_sq_gauss: np.ndarray,
     *,
     peaks_t: np.ndarray,
     peaks_x: np.ndarray,
@@ -74,31 +73,30 @@ def plot_peak_overlays(
     out_heatmap: Path,
     out_intensity: Path,
 ) -> None:
-    """Rebuild preprocess I² PNGs with scatter overlays (same layout as nsm-preprocess)."""
-    n_time, nx = i2_gauss.shape
+    """Rebuild preprocess squared-residual PNGs with scatter overlays (same layout as nsm-preprocess)."""
+    n_time, nx = residual_sq_gauss.shape
     t_rows = equidistant_time_indices(n_time, k=5)
-    stacked_i2 = np.stack([i2_gauss[int(t)] for t in t_rows], axis=0)
-    ymin2, ymax2 = y_axis_minmax(stacked_i2)
+    stacked_sq = np.stack([residual_sq_gauss[int(t)] for t in t_rows], axis=0)
+    ymin2, ymax2 = y_axis_minmax(stacked_sq)
 
     xs = np.arange(nx, dtype=np.float32)
+    ylab = r"$\mathrm{detail}^{2}$"
     prefix = (
-        f"(lpdiff)² / (Gaussian illumin, σ_x={ILLUMINATION_GAUSSIAN_SIGMA:g})² "
-        f"→ Gaussian σ_x={I2_GAUSSIAN_SIGMA:g} • {peak_meta}\n"
+        f"Gaussian σ_x={RESIDUAL_SQ_GAUSSIAN_SIGMA:g} after squaring • {peak_meta}\n"
     )
 
-    ylab_i2 = r"$I^2$"
     slices_note = (
         f"{len(t_rows)} equidistant time slices t ∈ {{{', '.join(str(int(t)) for t in t_rows)}}}"
     )
     title_line = (
-        f"{src_name.name}\nsnm-detect overlays • {prefix}{ylab_i2} vs x — {slices_note}"
+        f"{src_name.name}\nsnm-detect overlays • {prefix}{ylab} vs x — {slices_note}"
     )
 
-    fig_i2 = plt.figure(figsize=FIGSIZE_INCHES, layout="constrained")
-    ax_i2 = fig_i2.subplots()
+    fig_sq = plt.figure(figsize=FIGSIZE_INCHES, layout="constrained")
+    ax_sq = fig_sq.subplots()
     for i, t in enumerate(t_rows):
-        y_sq = stacked_i2[i]
-        ax_i2.plot(
+        y_sq = stacked_sq[i]
+        ax_sq.plot(
             xs,
             y_sq,
             color=f"C{i}",
@@ -108,8 +106,8 @@ def plot_peak_overlays(
         mk = peaks_t == int(t)
         if np.any(mk):
             px = peaks_x[mk]
-            py = i2_gauss[int(t), px.astype(np.int64)]
-            ax_i2.scatter(
+            py = residual_sq_gauss[int(t), px.astype(np.int64)]
+            ax_sq.scatter(
                 px.astype(np.float32),
                 py,
                 color=f"C{i}",
@@ -120,26 +118,26 @@ def plot_peak_overlays(
                 zorder=10,
                 label="_nolegend_",
             )
-    ax_i2.set_xlim(float(xs[0]), float(xs[-1]))
-    ax_i2.set_ylim(ymin2, ymax2)
-    ax_i2.set_xlabel("position x (pixel index)")
-    ax_i2.set_ylabel(ylab_i2)
-    ax_i2.grid(True, alpha=0.35)
-    ax_i2.set_title(title_line)
-    ax_i2.legend(loc="best", fontsize=9, framealpha=0.92)
+    ax_sq.set_xlim(float(xs[0]), float(xs[-1]))
+    ax_sq.set_ylim(ymin2, ymax2)
+    ax_sq.set_xlabel("position x (pixel index)")
+    ax_sq.set_ylabel(ylab)
+    ax_sq.grid(True, alpha=0.35)
+    ax_sq.set_title(title_line)
+    ax_sq.legend(loc="best", fontsize=9, framealpha=0.92)
     out_intensity.parent.mkdir(parents=True, exist_ok=True)
-    fig_i2.savefig(out_intensity, dpi=150)
-    plt.close(fig_i2)
+    fig_sq.savefig(out_intensity, dpi=150)
+    plt.close(fig_sq)
     print(f"Wrote {out_intensity.resolve()}")
 
-    disp = i2_gauss.T.astype(np.float32, copy=False)
-    heat_vmin, heat_vmax = np.percentile(i2_gauss, (1.0, 99.0))
+    disp = residual_sq_gauss.T.astype(np.float32, copy=False)
+    heat_vmin, heat_vmax = np.percentile(residual_sq_gauss, (1.0, 99.0))
     if (
         not np.isfinite(heat_vmin)
         or not np.isfinite(heat_vmax)
         or heat_vmax <= heat_vmin
     ):
-        heat_vmin, heat_vmax = y_axis_minmax(i2_gauss)
+        heat_vmin, heat_vmax = y_axis_minmax(residual_sq_gauss)
 
     fig_map = plt.figure(figsize=FIGSIZE_INCHES, layout="constrained")
     ax_map = fig_map.subplots()
@@ -153,7 +151,9 @@ def plot_peak_overlays(
         interpolation="nearest",
     )
     fig_map.colorbar(im, ax=ax_map, fraction=0.046, pad=0.04)
-    ax_map.set_title(f"{src_name.name}\nsnm-detect overlays • {prefix}I² kymograph")
+    ax_map.set_title(
+        f"{src_name.name}\nsnm-detect overlays • {prefix}{ylab} kymograph"
+    )
     ax_map.set_xlabel("time (axis 0)")
     ax_map.set_ylabel("position (pixels)")
     if peaks_t.size:
@@ -189,9 +189,7 @@ def write_peaks_h5(
         )
         ds.attrs["columns"] = "time, x"
         ds.attrs["source"] = str(source_path.expanduser().resolve())
-        ds.attrs["illumination_gaussian_sigma_x"] = float(ILLUMINATION_GAUSSIAN_SIGMA)
-        ds.attrs["i2_gaussian_sigma_x"] = float(I2_GAUSSIAN_SIGMA)
-        ds.attrs["i2_rescaled_by_illumination_squared"] = True
+        ds.attrs["residual_sq_gaussian_sigma_x"] = float(RESIDUAL_SQ_GAUSSIAN_SIGMA)
         ds.attrs["rel_prominence"] = float(rel_prominence)
         ds.attrs["peak_distance_px"] = int(distance)
     print(f"Wrote {dest.resolve()} — {len(peaks)} peaks")
@@ -200,7 +198,7 @@ def write_peaks_h5(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            f"SciPy peaks on illumination-rescaled `{I2_GAUSSIAN_DATASET}` "
+            f"SciPy peaks on `{RESIDUAL_SQ_GAUSSIAN_DATASET}` "
             "in *_preprocessed.h5 — scatter overlays matching nsm-preprocess."
         )
     )
@@ -208,8 +206,8 @@ def main() -> None:
         "preprocessed_h5",
         type=Path,
         help=(
-            "nsm-preprocess output HDF5 (`kymograph`, `illumination`, "
-            f"`{I2_GAUSSIAN_DATASET}`)"
+            "nsm-preprocess output HDF5 (`kymograph` or chosen --dataset key, "
+            f"plus `{RESIDUAL_SQ_GAUSSIAN_DATASET}`)"
         ),
     )
     parser.add_argument(
@@ -245,9 +243,9 @@ def main() -> None:
     if not src.is_file():
         raise FileNotFoundError(f"not a file: {src}")
 
-    i2_g, _ = load_kymograph(src, dataset_name=I2_GAUSSIAN_DATASET)
+    sq_g, _ = load_kymograph(src, dataset_name=RESIDUAL_SQ_GAUSSIAN_DATASET)
     pt, px = gather_peaks_rowwise(
-        i2_g,
+        sq_g,
         rel_prominence=float(args.rel_prominence),
         distance=int(args.distance),
     )
@@ -274,12 +272,12 @@ def main() -> None:
 
     plot_peak_overlays(
         src,
-        i2_gauss=i2_g,
+        residual_sq_gauss=sq_g,
         peaks_t=pt,
         peaks_x=px,
         peak_meta=pk_meta,
-        out_heatmap=out_dir / f"{stem}_detect_i2_gauss_heatmap.png",
-        out_intensity=out_dir / f"{stem}_detect_i2_gauss_intensity.png",
+        out_heatmap=out_dir / f"{stem}_detect_residual_sq_gauss_heatmap.png",
+        out_intensity=out_dir / f"{stem}_detect_residual_sq_gauss_intensity.png",
     )
 
 

@@ -16,11 +16,11 @@ from nsm.kymograph_io import (
     DEFAULT_LEADING_TIME_ROWS,
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
-    I2_GAUSSIAN_DATASET,
+    RESIDUAL_SQ_GAUSSIAN_DATASET,
     load_kymograph,
     resolve_video_destination,
 )
-from nsm.wavelet_residual import I2_GAUSSIAN_SIGMA, y_axis_minmax
+from nsm.wavelet_residual import RESIDUAL_SQ_GAUSSIAN_SIGMA, y_axis_minmax
 
 # Output pixels: keep **square** aspect to match ``FIGSIZE_INCHES`` (line movies use a square
 # figure). A wide target (e.g. 1280×512) was squeezing the plot vertically after resize.
@@ -121,7 +121,9 @@ def _movie_argparser(description: str, default_output: Path) -> argparse.Argumen
     p.add_argument(
         "h5_path",
         type=Path,
-        help="One .h5 (cropped raw for raw movie, *_preprocessed.h5 with lpdiff kymograph for preprocess movie)",
+        help=(
+            "One .h5 (cropped raw for raw movie, or *_preprocessed.h5 with wavelet-detail dataset for preprocess movies)"
+        ),
     )
     p.add_argument(
         "-o",
@@ -222,15 +224,16 @@ def main_movie_raw() -> None:
 def _main_movie_from_preprocessed_h5(*, squared: bool) -> None:
     if squared:
         description = (
-            "Animate illumination-rescaled Gaussian I² from *_preprocessed.h5 "
-            f"(`{I2_GAUSSIAN_DATASET}`, precomputed by nsm-preprocess; playback capped by "
+            "Animate Gaussian-smoothed squared wavelet detail from *_preprocessed.h5 "
+            f"(`{RESIDUAL_SQ_GAUSSIAN_DATASET}`, from nsm-preprocess; capped by "
             f"--max-frames, default {DEFAULT_LEADING_TIME_ROWS})."
         )
-        suffix = "_movie_preprocess_I2.mp4"
+        suffix = "_movie_preprocess_sq.mp4"
         title_mode = (
-            f"'{I2_GAUSSIAN_DATASET}' (lpdiff²/illum² • Gauss σ_x={I2_GAUSSIAN_SIGMA:g})"
+            f"`{RESIDUAL_SQ_GAUSSIAN_DATASET}` "
+            f"(detail² • Gauss σ_x={RESIDUAL_SQ_GAUSSIAN_SIGMA:g})"
         )
-        y_axis_label = r"$I^2$"
+        y_axis_label = r"$\mathrm{detail}^{2}$"
 
         def transform(a: np.ndarray) -> np.ndarray:
             return np.asarray(a, dtype=np.float32)
@@ -242,8 +245,8 @@ def _main_movie_from_preprocessed_h5(*, squared: bool) -> None:
             f"(loads full array; playback capped by --max-frames, default {DEFAULT_LEADING_TIME_ROWS})."
         )
         suffix = "_movie_preprocess.mp4"
-        title_mode = "Lpdiff residual vs x (from file)"
-        y_axis_label = "lpdiff residual"
+        title_mode = "Wavelet detail vs x (from file)"
+        y_axis_label = "wavelet detail"
 
         def transform(a: np.ndarray) -> np.ndarray:
             return a
@@ -266,7 +269,7 @@ def _main_movie_from_preprocessed_h5(*, squared: bool) -> None:
         y_axis_label=y_axis_label,
         fps=args.fps,
         dpi=args.dpi,
-        dataset_name=(I2_GAUSSIAN_DATASET if squared else args.dataset),
+        dataset_name=(RESIDUAL_SQ_GAUSSIAN_DATASET if squared else args.dataset),
         max_frames=args.max_frames,
     )
 
@@ -275,7 +278,7 @@ def main_movie_preprocess() -> None:
     _main_movie_from_preprocessed_h5(squared=False)
 
 
-def main_movie_preprocess_i2() -> None:
+def main_movie_preprocess_sq() -> None:
     _main_movie_from_preprocessed_h5(squared=True)
 
 

@@ -1,4 +1,4 @@
-"""Wavelet residual on kymographs: median background, LP along *x*, illumination-rescaled I², plotting scales."""
+"""Kymograph wavelet pipeline: temporal median correction, LP along *x*, detail residual, smoothed squared detail."""
 
 from __future__ import annotations
 
@@ -6,11 +6,8 @@ import numpy as np
 import pywt
 from skimage.filters import gaussian
 
-I2_GAUSSIAN_SIGMA = 10.0
-"""Gaussian σ in pixels along **x** on the rescaled **I²** kymograph."""
-
-ILLUMINATION_GAUSSIAN_SIGMA = 10.0
-"""Gaussian σ along **x** applied to the one-dimensional temporal-median profile."""
+RESIDUAL_SQ_GAUSSIAN_SIGMA = 10.0
+"""Gaussian σ in pixels along **x** on squared wavelet detail (applied after squaring)."""
 
 
 def temporal_median_background(arr: np.ndarray) -> np.ndarray:
@@ -86,40 +83,14 @@ def gaussian_smooth_along_x(arr_tx: np.ndarray, *, sigma: float) -> np.ndarray:
     return out.astype(np.float32, copy=False)
 
 
-def gaussian_smooth_profile_x(profile_x: np.ndarray, *, sigma: float) -> np.ndarray:
-    """Gaussian along **x** for a 1-D column profile ``(width,)``."""
-    row = np.asarray(profile_x, dtype=np.float32)[np.newaxis, :]
-    out = gaussian_smooth_along_x(row, sigma=sigma)
-    return out[0].astype(np.float32, copy=False)
-
-
-def rescale_lpdiff_sq_by_illum2(
-    lpdiff_tx: np.ndarray,
-    illumination_x: np.ndarray,
-) -> np.ndarray:
-    """``(lpdiff)² / illumin²`` with a floor on the denominator (illumination is 1-D)."""
-    sq = np.square(np.asarray(lpdiff_tx, dtype=np.float32))
-    ill = np.maximum(illumination_x.astype(np.float64), 1e-12)
-    ill2 = np.square(ill)
-    ref = float(np.max(ill2))
-    eps = max(ref * 1e-6, 1e-12) if ref > 0 else 1e-12
-    denom = np.maximum(ill2.astype(np.float32), float(eps))
-    return sq / denom
-
-
-def i2_from_lpdiff(
-    lpdiff_tx: np.ndarray,
-    illumination_smoothed_x: np.ndarray,
+def squared_residual_gaussian(
+    wavelet_detail_tx: np.ndarray,
     *,
-    gaussian_sigma: float = I2_GAUSSIAN_SIGMA,
+    gaussian_sigma: float = RESIDUAL_SQ_GAUSSIAN_SIGMA,
 ) -> np.ndarray:
-    """Kymograph ``(lpdiff)² / illumin²`` then Gaussian along **x** (panels / movie)."""
-    if illumination_smoothed_x.shape != (lpdiff_tx.shape[1],):
-        raise ValueError(
-            f"illumination length {illumination_smoothed_x.shape} != width {lpdiff_tx.shape[1]}"
-        )
-    z = rescale_lpdiff_sq_by_illum2(lpdiff_tx, illumination_smoothed_x)
-    return gaussian_smooth_along_x(z, sigma=float(gaussian_sigma))
+    """Squared wavelet-detail kymograph, then Gaussian along **x** (HDF5 panels, movies, peaks)."""
+    sq = np.square(np.asarray(wavelet_detail_tx, dtype=np.float32))
+    return gaussian_smooth_along_x(sq, sigma=float(gaussian_sigma))
 
 
 def y_axis_minmax(a: np.ndarray) -> tuple[float, float]:
@@ -143,16 +114,16 @@ def median_subtracted(arr_tx: np.ndarray) -> np.ndarray:
     return subtract_background(arr_tx, median)
 
 
-def lpdiff_residual(
+def wavelet_detail_residual(
     arr_tx: np.ndarray,
     *,
     wavelet: str = "db4",
     wavelet_level: int = 4,
 ) -> tuple[np.ndarray, str]:
-    """Median subtract → wavelet LP along x → ``preproc − LP`` and caption."""
+    """Temporal median correction → wavelet low-pass along *x* → detail = corrected − LP, plus caption."""
     corrected = median_subtracted(arr_tx)
     lp, lvl = wavelet_lowpass_along_x(
         corrected, wavelet=wavelet, level=wavelet_level
     )
-    res = corrected.astype(np.float32, copy=False) - lp
-    return res, wavelet_lp_caption(wavelet, lvl)
+    detail = corrected.astype(np.float32, copy=False) - lp
+    return detail, wavelet_lp_caption(wavelet, lvl)

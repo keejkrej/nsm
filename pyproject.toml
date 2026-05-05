@@ -24,7 +24,7 @@ nsm-preprocess = "nsm.preprocess:main"
 nsm-detect = "nsm.peak_detect:main"
 nsm-movie-raw = "nsm.line_movie:main_movie_raw"
 nsm-movie-preprocess = "nsm.line_movie:main_movie_preprocess"
-nsm-movie-preprocess-i2 = "nsm.line_movie:main_movie_preprocess_i2"
+nsm-movie-preprocess-sq = "nsm.line_movie:main_movie_preprocess_sq"
 
 [build-system]
 requires = ["hatchling"]

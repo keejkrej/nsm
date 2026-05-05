@@ -11,11 +11,8 @@ import numpy as np
 DEFAULT_KYMOGRAPH_DATASET = "kymograph"
 """Default HDF5 dataset key for `(time, position)` intensity arrays."""
 
-ILLUMINATION_DATASET = "illumination"
-"""Temporal-median intensity along **x**, then Gaussian-smoothed along **x** (saved curve)."""
-
-I2_GAUSSIAN_DATASET = "i2_gaussian"
-"""Gaussian along **x** of ``(lpdiff)² / (smoothed illumination)²`` — same as preprocess/movie."""
+RESIDUAL_SQ_GAUSSIAN_DATASET = "residual_sq_gaussian"
+"""Gaussian smoothing along **x** of squared wavelet-detail kymograph."""
 
 DEFAULT_LEADING_TIME_ROWS = 1024
 """Default leading time rows kept by ``nsm-crop`` and used as ``--max-frames`` defaults in movies."""
