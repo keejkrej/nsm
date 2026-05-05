@@ -1,4 +1,4 @@
-"""Line-scan movies along time (raw intensity or preprocessed residual)."""
+"""Line-scan movies along time (raw or preprocessed line vs x)."""
 
 from __future__ import annotations
 
@@ -21,10 +21,13 @@ from nsm.data import (
     load_kymograph,
     output_path_for_file,
 )
-from nsm.statistics import temporal_median_background
+from nsm.lpdiff import median_subtracted, y_axis_minmax
 
-# Even, div by 16 — avoids libx264 / imageio padding surprises.
-_FRAME_PX_WH = (1280, 512)
+# Output pixels: keep **square** aspect to match ``FIGSIZE_INCHES`` (line movies use a square
+# figure). A wide target (e.g. 1280×512) was squeezing the plot vertically after resize.
+# Side length is a multiple of 16 for libx264.
+_FRAME_PX_SIDE = 1280
+_FRAME_PX_WH = (_FRAME_PX_SIDE, _FRAME_PX_SIDE)
 
 
 def _frame_rgb(fig: plt.Figure, dpi: int) -> np.ndarray:
@@ -81,9 +84,8 @@ def _make_movie_frames_line(
     t_max, x_size = data_td.shape
     frames_cap = max(1, min(max_frames, t_max))
 
-    vmin, vmax = np.percentile(data_td[:frames_cap], [1.0, 99.0])
-    vmin = float(vmin)
-    vmax = float(vmax) + 1e-6 if vmax <= vmin else float(vmax)
+    chunk = data_td[:frames_cap]
+    vmin, vmax = y_axis_minmax(chunk)
 
     xs = np.arange(x_size, dtype=np.float32)
     frames_rgb: list[np.ndarray] = []
@@ -235,14 +237,10 @@ def main_movie_preprocess() -> None:
     paths = discover_h5_files(data_dir)
     template = args.output.expanduser()
 
-    def _preprocess_residual(a: np.ndarray) -> np.ndarray:
-        med = temporal_median_background(a)
-        return a - med
-
     _run_movie_line(
         paths,
         template=template,
-        transform=_preprocess_residual,
+        transform=median_subtracted,
         title_mode="Preprocessed: raw − temporal median (per x)",
         y_axis_label="residual intensity",
         fps=args.fps,
