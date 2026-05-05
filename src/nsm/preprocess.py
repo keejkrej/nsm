@@ -1,4 +1,4 @@
-"""Preprocess: median-subtracted HDF5 (+ illumination median profile) + lpdiff PNGs."""
+"""Preprocess: lpdiff residual HDF5 (+ illumination median profile) + PNG panels."""
 
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ from nsm.lpdiff import (
     equidistant_time_indices,
     kymograph_clip_for_imshow,
     lpdiff_residual,
-    subtract_background,
     temporal_median_background,
     y_axis_minmax,
 )
@@ -54,7 +53,8 @@ def _write_preprocessed_h5(
             data=illumination.astype(np.float32, copy=False),
         )
     print(
-        f"Wrote {path.resolve()} — {dataset_name!r} (median-subtracted), "
+        f"Wrote {path.resolve()} — {dataset_name!r} "
+        f"(median subtract − wavelet LP along x), "
         f"{ILLUMINATION_DATASET!r} (per-x median over t)"
     )
 
@@ -143,18 +143,23 @@ def _plot_preprocess_outputs(
     *,
     arr: np.ndarray | None,
     disk_shape: tuple[int, int] | None,
+    lpdiff: tuple[np.ndarray, str] | None,
     out_lpdiff: tuple[Path | None, Path | None],
     show: bool,
     dataset_name: str,
     wavelet: str,
     wavelet_level: int,
 ) -> None:
-    if arr is None or disk_shape is None:
-        arr, disk_shape = load_kymograph(path, dataset_name=dataset_name)
-
-    res, smooth_caption = lpdiff_residual(
-        arr, wavelet=wavelet, wavelet_level=wavelet_level
-    )
+    if lpdiff is None:
+        if arr is None or disk_shape is None:
+            arr, disk_shape = load_kymograph(path, dataset_name=dataset_name)
+        res, smooth_caption = lpdiff_residual(
+            arr, wavelet=wavelet, wavelet_level=wavelet_level
+        )
+    else:
+        res, smooth_caption = lpdiff
+        if arr is None or disk_shape is None:
+            arr, disk_shape = load_kymograph(path, dataset_name=dataset_name)
 
     meta = f"loaded array {tuple(arr.shape)} • on-disk {disk_shape}"
 
@@ -172,9 +177,9 @@ def _plot_preprocess_outputs(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "One input .h5 (full time axis): writes <stem>_preprocessed.h5 with the "
-            "median-subtracted kymograph, per-x temporal median as illumination, "
-            "plus two lpdiff PNGs."
+            "One input .h5 (full time axis): writes <stem>_preprocessed.h5 with "
+            "the lpdiff kymograph (raw − temporal median − wavelet low-pass along x), "
+            "per-x temporal median as illumination, plus two PNG panels matching that residual."
         )
     )
     parser.add_argument(
@@ -221,22 +226,28 @@ def main() -> None:
 
     if not args.no_save:
         print(
-            "nsm-preprocess: preprocessed .h5 (kymograph + illumination median) + "
-            "2× lpdiff PNG (wavelet LP along x)."
+            "nsm-preprocess: preprocessed .h5 (lpdiff kymograph + illumination) + "
+            "2× PNG panels."
         )
 
     out_dir: Path | None = None if args.no_save else resolve_output_directory(args.output)
     stem = h5_path.stem
     arr0: np.ndarray | None = None
     disk_shape0: tuple[int, int] | None = None
+    lpdiff_cache: tuple[np.ndarray, str] | None = None
     if out_dir is not None:
         pre_h5 = out_dir / f"{stem}_preprocessed.h5"
         arr0, disk_shape0 = load_kymograph(h5_path, dataset_name=args.dataset)
         illumination = temporal_median_background(arr0)
-        pre = subtract_background(arr0, illumination)
+        res, capt = lpdiff_residual(
+            arr0,
+            wavelet=args.wavelet,
+            wavelet_level=args.wavelet_level,
+        )
+        lpdiff_cache = (res, capt)
         _write_preprocessed_h5(
             pre_h5,
-            preprocessed=pre,
+            preprocessed=res,
             illumination=illumination,
             dataset_name=args.dataset,
         )
@@ -251,6 +262,7 @@ def main() -> None:
         h5_path,
         arr=arr0,
         disk_shape=disk_shape0,
+        lpdiff=lpdiff_cache,
         out_lpdiff=out_lp,
         show=args.show or args.no_save,
         dataset_name=args.dataset,

@@ -150,7 +150,7 @@ def save_kymograph_mask_overlay(
     out_path: Path,
     meta: str,
 ) -> None:
-    """``imshow``: preprocessed residual (T×X) with semi-transparent mask overlay."""
+    """``imshow``: lpdiff residual (T×X) with semi-transparent mask overlay."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=FIGSIZE_INCHES, layout="constrained")
     disp = proc.T.astype(np.float64)
@@ -175,7 +175,7 @@ def save_kymograph_mask_overlay(
     rgba[..., 2] = 1.0
     rgba[..., 3] = np.clip(m, 0.0, 1.0) * 0.6
     ax.imshow(rgba, aspect="equal", origin="upper", interpolation="nearest")
-    ax.set_title(f"preprocessed + particle mask overlay (cyan)\n{meta}")
+    ax.set_title(f"lpdiff + particle mask overlay (cyan)\n{meta}")
     ax.set_xlabel("time (axis 0)")
     ax.set_ylabel("position (pixels)")
     fig.savefig(out_path, dpi=150)
@@ -211,12 +211,12 @@ def save_first_frame_intensity_masked(
         linewidth=0,
         label="mask (particle)",
     )
-    ax.plot(xs, y, color="C0", linewidth=1.0, label="preprocessed t = 0")
+    ax.plot(xs, y, color="C0", linewidth=1.0, label="lpdiff t = 0")
     ax.set_xlim(float(xs[0]), float(xs[-1]))
     ax.set_ylim(ymin, ymax)
     ax.axhline(0.0, color="0.55", linestyle=":", linewidth=0.85)
     ax.set_xlabel("position x (pixel index)")
-    ax.set_ylabel("preprocessed intensity")
+    ax.set_ylabel("lpdiff residual")
     ax.set_title(f"{meta}\nfirst time slice + mask")
     ax.grid(True, alpha=0.35)
     ax.legend(loc="best", fontsize=9, framealpha=0.92)
@@ -263,10 +263,10 @@ def frames_detect_line_movie(
             ax.set_ylim(ymin, ymax)
             ax.axhline(0.0, color="0.55", linestyle=":", linewidth=0.75)
             ax.set_xlabel("position x (pixel index)")
-            ax.set_ylabel("preprocessed intensity")
+            ax.set_ylabel("lpdiff residual")
             ax.grid(True, alpha=0.35)
             ax.set_title(
-                f"{title_stem}\npreprocessed + mask • {method_label}\n"
+                f"{title_stem}\nlpdiff + mask • {method_label}\n"
                 f"frame t = {t} / {cap - 1}  (cap {max_frames} of {t_max} rows)",
                 fontsize=10,
             )
@@ -310,7 +310,7 @@ def main() -> None:
             "Particle mask per time × position from nsm-preprocess *_preprocessed.h5. "
             "Squares residuals (energy), optionally divides by illumin² where signal tracks "
             "illumination, then Gaussian blur along x (default σ ≈ 6.25 → ~50 px span), "
-            "then Sauvola (adaptive along x; default) or per-slice global Otsu. "
+            "then per-row **Otsu** (default) or optional Sauvola along x. "
             "Writes overlay + first-slice intensity PNGs (like nsm-preprocess); "
             "use --movie for a line-scan video with mask shading."
         )
@@ -318,7 +318,7 @@ def main() -> None:
     parser.add_argument(
         "preprocessed_h5",
         type=Path,
-        help="Output of nsm-preprocess (datasets: kymograph + illumination)",
+        help="nsm-preprocess output: lpdiff `kymograph` + `illumination`",
     )
     parser.add_argument(
         "-o",
@@ -335,9 +335,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--method",
-        choices=("sauvola", "otsu"),
-        default="sauvola",
-        help="sauvola = local adaptive along x (default); otsu = one global threshold per row",
+        choices=("otsu", "sauvola"),
+        default="otsu",
+        help="otsu = one global threshold per time row (default); sauvola = local adaptive along x",
     )
     parser.add_argument(
         "--window",
@@ -380,7 +380,7 @@ def main() -> None:
     parser.add_argument(
         "--movie",
         action="store_true",
-        help="Also write <stem>_detect_movie.mp4 (preprocessed line vs x + mask per frame)",
+        help="Also write <stem>_detect_movie.mp4 (lpdiff line vs x + mask per frame)",
     )
     parser.add_argument(
         "--fps",

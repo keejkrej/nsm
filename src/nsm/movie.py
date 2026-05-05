@@ -120,7 +120,7 @@ def _movie_argparser(description: str, default_output: Path) -> argparse.Argumen
     p.add_argument(
         "h5_path",
         type=Path,
-        help="One .h5 (cropped raw for raw movie, *_preprocessed.h5 for preprocess movie)",
+        help="One .h5 (cropped raw for raw movie, *_preprocessed.h5 with lpdiff kymograph for preprocess movie)",
     )
     p.add_argument(
         "-o",
@@ -221,7 +221,8 @@ def main_movie_raw() -> None:
 def main_movie_preprocess() -> None:
     parser = _movie_argparser(
         (
-            "Animate residual intensity vs x from nsm-preprocess *_preprocessed.h5 "
+            "Animate (median subtract − wavelet LP along x) vs x from nsm-preprocess "
+            "*_preprocessed.h5 "
             f"(loads full array; playback capped by --max-frames, default {MAX_TIME_SAMPLES})."
         ),
         DEFAULT_PLOTS_DIR,
@@ -241,8 +242,8 @@ def main_movie_preprocess() -> None:
         path,
         dest=dest,
         transform=lambda a: a,
-        title_mode="Preprocessed residual vs x (from file)",
-        y_axis_label="residual intensity",
+        title_mode="Lpdiff residual vs x (from file)",
+        y_axis_label="lpdiff residual",
         fps=args.fps,
         dpi=args.dpi,
         dataset_name=args.dataset,
