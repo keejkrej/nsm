@@ -1,4 +1,4 @@
-"""Preprocess: lpdiff residual HDF5 (+ illumination median profile) + PNG panels."""
+"""Preprocess: lpdiff residual HDF5 (+ illumination + Gaussian I²) + PNG panels."""
 
 from __future__ import annotations
 
@@ -13,25 +13,29 @@ from nsm.data import (
     DATASET_DEFAULT,
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
+    I2_GAUSSIAN_DATASET,
     IMAGE_CMAP,
     ILLUMINATION_DATASET,
     load_kymograph,
     resolve_output_directory,
 )
 from nsm.lpdiff import (
+    I2_GAUSSIAN_SIGMA,
+    ILLUMINATION_GAUSSIAN_SIGMA,
     equidistant_time_indices,
+    gaussian_smooth_profile_x,
+    i2_from_lpdiff,
     lpdiff_residual,
     temporal_median_background,
     y_axis_minmax,
 )
 
 
-def _lpdiff_png_paths(out_dir: Path, stem: str) -> tuple[Path, Path]:
-    """``lpdiff`` = preprocessed minus wavelet LP (along x); output PNG pair."""
+def _preprocess_png_paths(out_dir: Path, stem: str) -> tuple[Path, Path]:
     suf = ".png"
     return (
-        out_dir / f"{stem}_lpdiff_intensity{suf}",
-        out_dir / f"{stem}_lpdiff_heatmap{suf}",
+        out_dir / f"{stem}_i2_gauss_heatmap{suf}",
+        out_dir / f"{stem}_i2_gauss_intensity{suf}",
     )
 
 
@@ -39,6 +43,7 @@ def _write_preprocessed_h5(
     path: Path,
     *,
     preprocessed: np.ndarray,
+    i2_gaussian: np.ndarray,
     illumination: np.ndarray,
     dataset_name: str,
 ) -> None:
@@ -48,79 +53,93 @@ def _write_preprocessed_h5(
             dataset_name, data=preprocessed.astype(np.float32, copy=False)
         )
         fw.create_dataset(
+            I2_GAUSSIAN_DATASET,
+            data=i2_gaussian.astype(np.float32, copy=False),
+        )
+        fw.create_dataset(
             ILLUMINATION_DATASET,
             data=illumination.astype(np.float32, copy=False),
         )
     print(
         f"Wrote {path.resolve()} — {dataset_name!r} "
-        f"(median subtract − wavelet LP along x), "
-        f"{ILLUMINATION_DATASET!r} (per-x median over t)"
+        f"(median subtract − wavelet LP along x); "
+        f"{I2_GAUSSIAN_DATASET!r} ((lpdiff)² / (smoothed {ILLUMINATION_DATASET})², "
+        f"then Gaussian σ_x={I2_GAUSSIAN_SIGMA:g}); "
+        f"{ILLUMINATION_DATASET!r} (median over t, Gaussian σ_x="
+        f"{ILLUMINATION_GAUSSIAN_SIGMA:g} along x)"
     )
 
 
-def _plot_lpdiff(
+def _plot_preprocess_panels(
     path: Path,
     *,
     meta: str,
     residual: np.ndarray,
+    i2_kymo: np.ndarray,
     smooth_caption: str,
-    out_intensity: Path | None,
     out_heatmap: Path | None,
+    out_i2_intensity: Path | None,
     show: bool,
 ) -> None:
-    """``residual`` = preprocessed (raw − temporal median) minus wavelet LP along x."""
-    n_time, _ = residual.shape
+    """Line slices and heatmap show **i2_kymo** (illumination-rescaled Gaussian I²)."""
+    n_time, nx = residual.shape
+    assert i2_kymo.shape == (n_time, nx)
     t_rows = equidistant_time_indices(n_time, k=5)
-    stacked = np.stack([residual[int(t)].astype(np.float32, copy=False) for t in t_rows], axis=0)
-    ymin, ymax = y_axis_minmax(stacked)
+    stacked_i2 = np.stack([i2_kymo[int(t)] for t in t_rows], axis=0)
+    ymin2, ymax2 = y_axis_minmax(stacked_i2)
 
-    xs = np.arange(residual.shape[1], dtype=np.float32)
+    xs = np.arange(nx, dtype=np.float32)
+    prefix = f"preprocessed − wavelet LP ({smooth_caption})\n"
+    slices_note = f"{len(t_rows)} equidistant time slice{'s' if len(t_rows) != 1 else ''} t ∈ {{{', '.join(str(int(t)) for t in t_rows)}}}"
 
-    disp = residual.T.astype(np.float32, copy=False)
-    heat_vmin, heat_vmax = np.percentile(residual, (1.0, 99.0))
+    ylab_i2 = r"$I^2$"
+    ylab_i2_sub = (
+        f"(lpdiff)² / (Gaussian illumin, σ_x={ILLUMINATION_GAUSSIAN_SIGMA:g})², "
+        f"then Gaussian σ_x={I2_GAUSSIAN_SIGMA:g} along x"
+    )
+    i2_line_title = (
+        f"{path.name}\n{prefix}{ylab_i2} vs x — {slices_note} • {ylab_i2_sub}\n"
+        rf"($I$ = lpdiff residual) • {meta}"
+    )
+
+    fig_i2 = plt.figure(figsize=FIGSIZE_INCHES, layout="constrained")
+    ax_i2 = fig_i2.subplots()
+    for i, t in enumerate(t_rows):
+        y_sq = stacked_i2[i]
+        ax_i2.plot(
+            xs,
+            y_sq,
+            color=f"C{i}",
+            linewidth=0.9,
+            label=f"t = {int(t)}",
+        )
+    ax_i2.set_xlim(float(xs[0]), float(xs[-1]))
+    ax_i2.set_ylim(ymin2, ymax2)
+    ax_i2.set_xlabel("position x (pixel index)")
+    ax_i2.set_ylabel(ylab_i2)
+    ax_i2.grid(True, alpha=0.35)
+    ax_i2.set_title(i2_line_title)
+    ax_i2.legend(loc="best", fontsize=9, framealpha=0.92)
+
+    if out_i2_intensity is not None:
+        out_i2_intensity.parent.mkdir(parents=True, exist_ok=True)
+        fig_i2.savefig(out_i2_intensity, dpi=150)
+        print(f"Wrote {out_i2_intensity.resolve()}")
+    if not show:
+        plt.close(fig_i2)
+
+    disp = i2_kymo.T.astype(np.float32, copy=False)
+    heat_vmin, heat_vmax = np.percentile(i2_kymo, (1.0, 99.0))
     if (
         not np.isfinite(heat_vmin)
         or not np.isfinite(heat_vmax)
         or heat_vmax <= heat_vmin
     ):
-        heat_vmin, heat_vmax = y_axis_minmax(residual)
+        heat_vmin, heat_vmax = y_axis_minmax(i2_kymo)
 
-    base_ylab = "raw − temporal median"
-    base_heat = "raw − temporal median (per column)"
-    ylab = f"{base_ylab} − LP"
-    heat_title = f"{base_heat} − wavelet LP along x"
-    prefix = f"preprocessed − wavelet LP ({smooth_caption})\n"
-    slices_note = f"{len(t_rows)} equidistant time slice{'s' if len(t_rows) != 1 else ''} t ∈ {{{', '.join(str(int(t)) for t in t_rows)}}}"
-    line_title = f"{path.name}\n{prefix}{ylab} vs x — {slices_note} • {meta}"
-    map_title = f"{prefix}{heat_title}\n{meta}"
-    ref_y = 0.0
-
-    fig_line = plt.figure(figsize=FIGSIZE_INCHES, layout="constrained")
-    ax_line = fig_line.subplots()
-    for i, t in enumerate(t_rows):
-        y = residual[int(t)].astype(np.float32, copy=False)
-        ax_line.plot(
-            xs,
-            y,
-            color=f"C{i}",
-            linewidth=0.9,
-            label=f"t = {int(t)}",
-        )
-    ax_line.set_xlim(float(xs[0]), float(xs[-1]))
-    ax_line.set_ylim(ymin, ymax)
-    ax_line.set_xlabel("position x (pixel index)")
-    ax_line.set_ylabel(ylab)
-    ax_line.axhline(ref_y, color="0.4", linestyle=":", linewidth=0.8)
-    ax_line.grid(True, alpha=0.35)
-    ax_line.set_title(line_title)
-    ax_line.legend(loc="best", fontsize=9, framealpha=0.92)
-
-    if out_intensity is not None:
-        out_intensity.parent.mkdir(parents=True, exist_ok=True)
-        fig_line.savefig(out_intensity, dpi=150)
-        print(f"Wrote {out_intensity.resolve()}")
-    if not show:
-        plt.close(fig_line)
+    heat_title = (
+        f"{prefix}{ylab_i2} kymograph • {ylab_i2_sub}\n{meta}"
+    )
 
     fig_map = plt.figure(figsize=FIGSIZE_INCHES, layout="constrained")
     ax_map = fig_map.subplots()
@@ -134,7 +153,7 @@ def _plot_lpdiff(
         interpolation="nearest",
     )
     fig_map.colorbar(im, ax=ax_map, fraction=0.046, pad=0.04)
-    ax_map.set_title(map_title)
+    ax_map.set_title(heat_title)
     ax_map.set_xlabel("time (axis 0)")
     ax_map.set_ylabel("position (pixels)")
 
@@ -151,33 +170,39 @@ def _plot_preprocess_outputs(
     *,
     arr: np.ndarray | None,
     disk_shape: tuple[int, int] | None,
-    lpdiff: tuple[np.ndarray, str] | None,
-    out_lpdiff: tuple[Path | None, Path | None],
+    bundle: tuple[np.ndarray, np.ndarray, str] | None,
+    out_paths: tuple[Path | None, Path | None],
     show: bool,
     dataset_name: str,
     wavelet: str,
     wavelet_level: int,
 ) -> None:
-    if lpdiff is None:
+    """``bundle`` = ``(lpdiff residual, i2_gaussian, smooth_caption)`` when available."""
+    if bundle is None:
         if arr is None or disk_shape is None:
             arr, disk_shape = load_kymograph(path, dataset_name=dataset_name)
         res, smooth_caption = lpdiff_residual(
             arr, wavelet=wavelet, wavelet_level=wavelet_level
         )
+        illum_s = gaussian_smooth_profile_x(
+            temporal_median_background(arr), sigma=ILLUMINATION_GAUSSIAN_SIGMA
+        )
+        i2_k = i2_from_lpdiff(res, illum_s)
     else:
-        res, smooth_caption = lpdiff
+        res, i2_k, smooth_caption = bundle
         if arr is None or disk_shape is None:
             arr, disk_shape = load_kymograph(path, dataset_name=dataset_name)
 
     meta = f"loaded array {tuple(arr.shape)} • on-disk {disk_shape}"
 
-    _plot_lpdiff(
+    _plot_preprocess_panels(
         path,
         meta=meta,
         residual=res,
+        i2_kymo=i2_k,
         smooth_caption=smooth_caption,
-        out_intensity=out_lpdiff[0],
-        out_heatmap=out_lpdiff[1],
+        out_heatmap=out_paths[0],
+        out_i2_intensity=out_paths[1],
         show=show,
     )
 
@@ -185,9 +210,10 @@ def _plot_preprocess_outputs(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "One input .h5 (full time axis): writes <stem>_preprocessed.h5 with "
-            "the lpdiff kymograph (raw − temporal median − wavelet low-pass along x), "
-            "per-x temporal median as illumination, plus two PNG panels matching that residual."
+            "One input .h5: writes <stem>_preprocessed.h5 with lpdiff kymograph "
+            "(raw − temporal median − wavelet LP along x), Gaussian-smoothed temporal-median "
+            "illumination along x, illumination-rescaled Gaussian I² along x, plus two PNG "
+            "panels (I² kymogram heatmap and multi-time I² vs x)."
         )
     )
     parser.add_argument(
@@ -234,7 +260,7 @@ def main() -> None:
 
     if not args.no_save:
         print(
-            "nsm-preprocess: preprocessed .h5 (lpdiff kymograph + illumination) + "
+            "nsm-preprocess: preprocessed .h5 (lpdiff + i2_gaussian + illumination) + "
             "2× PNG panels."
         )
 
@@ -242,36 +268,41 @@ def main() -> None:
     stem = h5_path.stem
     arr0: np.ndarray | None = None
     disk_shape0: tuple[int, int] | None = None
-    lpdiff_cache: tuple[np.ndarray, str] | None = None
+    bundle: tuple[np.ndarray, np.ndarray, str] | None = None
     if out_dir is not None:
         pre_h5 = out_dir / f"{stem}_preprocessed.h5"
         arr0, disk_shape0 = load_kymograph(h5_path, dataset_name=args.dataset)
-        illumination = temporal_median_background(arr0)
+        illum_median = temporal_median_background(arr0)
+        illumination_smooth = gaussian_smooth_profile_x(
+            illum_median, sigma=ILLUMINATION_GAUSSIAN_SIGMA
+        )
         res, capt = lpdiff_residual(
             arr0,
             wavelet=args.wavelet,
             wavelet_level=args.wavelet_level,
         )
-        lpdiff_cache = (res, capt)
+        i2_g = i2_from_lpdiff(res, illumination_smooth)
+        bundle = (res, i2_g, capt)
         _write_preprocessed_h5(
             pre_h5,
             preprocessed=res,
-            illumination=illumination,
+            i2_gaussian=i2_g,
+            illumination=illumination_smooth,
             dataset_name=args.dataset,
         )
 
-    out_lp: tuple[Path | None, Path | None]
+    out_p: tuple[Path | None, Path | None]
     if out_dir is None:
-        out_lp = (None, None)
+        out_p = (None, None)
     else:
-        out_lp = _lpdiff_png_paths(out_dir, stem)
+        out_p = _preprocess_png_paths(out_dir, stem)
 
     _plot_preprocess_outputs(
         h5_path,
         arr=arr0,
         disk_shape=disk_shape0,
-        lpdiff=lpdiff_cache,
-        out_lpdiff=out_lp,
+        bundle=bundle,
+        out_paths=out_p,
         show=args.show or args.no_save,
         dataset_name=args.dataset,
         wavelet=args.wavelet,

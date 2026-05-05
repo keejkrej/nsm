@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 import pywt
+from skimage.filters import gaussian
+
+I2_GAUSSIAN_SIGMA = 10.0
+"""Gaussian σ in pixels along **x** on the rescaled **I²** kymograph."""
+
+ILLUMINATION_GAUSSIAN_SIGMA = 10.0
+"""Gaussian σ along **x** applied to the one-dimensional temporal-median profile."""
 
 
 def temporal_median_background(arr: np.ndarray) -> np.ndarray:
@@ -62,6 +69,57 @@ def equidistant_time_indices(n_time: int, *, k: int = 5) -> np.ndarray:
         return np.zeros(1, dtype=np.int64)
     denom = k_eff - 1
     return (np.arange(k_eff, dtype=np.int64) * (n_time - 1) // denom).astype(np.int64)
+
+
+def gaussian_smooth_along_x(arr_tx: np.ndarray, *, sigma: float) -> np.ndarray:
+    """Smooth each time row along **x** only. ``σ≤0`` returns ``arr_tx`` as float32."""
+    z = np.asarray(arr_tx, dtype=np.float32)
+    if sigma <= 0:
+        return z
+    out = gaussian(
+        np.asarray(z, dtype=np.float64),
+        sigma=(0.0, float(sigma)),
+        mode="reflect",
+        preserve_range=True,
+        truncate=4.0,
+    )
+    return out.astype(np.float32, copy=False)
+
+
+def gaussian_smooth_profile_x(profile_x: np.ndarray, *, sigma: float) -> np.ndarray:
+    """Gaussian along **x** for a 1-D column profile ``(width,)``."""
+    row = np.asarray(profile_x, dtype=np.float32)[np.newaxis, :]
+    out = gaussian_smooth_along_x(row, sigma=sigma)
+    return out[0].astype(np.float32, copy=False)
+
+
+def rescale_lpdiff_sq_by_illum2(
+    lpdiff_tx: np.ndarray,
+    illumination_x: np.ndarray,
+) -> np.ndarray:
+    """``(lpdiff)² / illumin²`` with a floor on the denominator (illumination is 1-D)."""
+    sq = np.square(np.asarray(lpdiff_tx, dtype=np.float32))
+    ill = np.maximum(illumination_x.astype(np.float64), 1e-12)
+    ill2 = np.square(ill)
+    ref = float(np.max(ill2))
+    eps = max(ref * 1e-6, 1e-12) if ref > 0 else 1e-12
+    denom = np.maximum(ill2.astype(np.float32), float(eps))
+    return sq / denom
+
+
+def i2_from_lpdiff(
+    lpdiff_tx: np.ndarray,
+    illumination_smoothed_x: np.ndarray,
+    *,
+    gaussian_sigma: float = I2_GAUSSIAN_SIGMA,
+) -> np.ndarray:
+    """Kymograph ``(lpdiff)² / illumin²`` then Gaussian along **x** (panels / movie)."""
+    if illumination_smoothed_x.shape != (lpdiff_tx.shape[1],):
+        raise ValueError(
+            f"illumination length {illumination_smoothed_x.shape} != width {lpdiff_tx.shape[1]}"
+        )
+    z = rescale_lpdiff_sq_by_illum2(lpdiff_tx, illumination_smoothed_x)
+    return gaussian_smooth_along_x(z, sigma=float(gaussian_sigma))
 
 
 def y_axis_minmax(a: np.ndarray) -> tuple[float, float]:

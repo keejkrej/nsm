@@ -15,11 +15,12 @@ from nsm.data import (
     DATASET_DEFAULT,
     DEFAULT_PLOTS_DIR,
     FIGSIZE_INCHES,
+    I2_GAUSSIAN_DATASET,
     MAX_TIME_SAMPLES,
     load_kymograph,
     resolve_video_destination,
 )
-from nsm.lpdiff import y_axis_minmax
+from nsm.lpdiff import I2_GAUSSIAN_SIGMA, y_axis_minmax
 
 # Output pixels: keep **square** aspect to match ``FIGSIZE_INCHES`` (line movies use a square
 # figure). A wide target (e.g. 1280×512) was squeezing the plot vertically after resize.
@@ -218,15 +219,36 @@ def main_movie_raw() -> None:
     )
 
 
-def main_movie_preprocess() -> None:
-    parser = _movie_argparser(
-        (
+def _main_movie_from_preprocessed_h5(*, squared: bool) -> None:
+    if squared:
+        description = (
+            "Animate illumination-rescaled Gaussian I² from *_preprocessed.h5 "
+            f"(`{I2_GAUSSIAN_DATASET}`, precomputed by nsm-preprocess; playback capped by "
+            f"--max-frames, default {MAX_TIME_SAMPLES})."
+        )
+        suffix = "_movie_preprocess_I2.mp4"
+        title_mode = (
+            f"'{I2_GAUSSIAN_DATASET}' (lpdiff²/illum² • Gauss σ_x={I2_GAUSSIAN_SIGMA:g})"
+        )
+        y_axis_label = r"$I^2$"
+
+        def transform(a: np.ndarray) -> np.ndarray:
+            return np.asarray(a, dtype=np.float32)
+
+    else:
+        description = (
             "Animate (median subtract − wavelet LP along x) vs x from nsm-preprocess "
             "*_preprocessed.h5 "
             f"(loads full array; playback capped by --max-frames, default {MAX_TIME_SAMPLES})."
-        ),
-        DEFAULT_PLOTS_DIR,
-    )
+        )
+        suffix = "_movie_preprocess.mp4"
+        title_mode = "Lpdiff residual vs x (from file)"
+        y_axis_label = "lpdiff residual"
+
+        def transform(a: np.ndarray) -> np.ndarray:
+            return a
+
+    parser = _movie_argparser(description, DEFAULT_PLOTS_DIR)
     args = parser.parse_args()
     if args.max_frames < 1:
         parser.error("--max-frames must be >= 1")
@@ -234,21 +256,27 @@ def main_movie_preprocess() -> None:
     path = args.h5_path.expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"not a file: {path}")
-    dest = resolve_video_destination(
-        args.output, source_stem=path.stem, suffix="_movie_preprocess.mp4"
-    )
+    dest = resolve_video_destination(args.output, source_stem=path.stem, suffix=suffix)
 
     _run_movie_line(
         path,
         dest=dest,
-        transform=lambda a: a,
-        title_mode="Lpdiff residual vs x (from file)",
-        y_axis_label="lpdiff residual",
+        transform=transform,
+        title_mode=title_mode,
+        y_axis_label=y_axis_label,
         fps=args.fps,
         dpi=args.dpi,
-        dataset_name=args.dataset,
+        dataset_name=(I2_GAUSSIAN_DATASET if squared else args.dataset),
         max_frames=args.max_frames,
     )
+
+
+def main_movie_preprocess() -> None:
+    _main_movie_from_preprocessed_h5(squared=False)
+
+
+def main_movie_preprocess_i2() -> None:
+    _main_movie_from_preprocessed_h5(squared=True)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,10 @@ DATASET_DEFAULT = "kymograph"
 """Default HDF5 dataset name for kymograph arrays."""
 
 ILLUMINATION_DATASET = "illumination"
-"""Per-column median over time in ``*_preprocessed.h5`` (illumination profile)."""
+"""Temporal-median intensity along **x**, then Gaussian-smoothed along **x** (saved curve)."""
+
+I2_GAUSSIAN_DATASET = "i2_gaussian"
+"""Gaussian along **x** of ``(lpdiff)² / (smoothed illumination)²`` — same as preprocess/movie."""
 
 MAX_TIME_SAMPLES = 1024
 """Default leading time rows for **cropped** exports (``nsm-crop``) and movie frame caps."""

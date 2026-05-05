@@ -182,6 +182,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pywavelets" },
     { name = "scikit-image" },
+    { name = "scipy" },
 ]
 
 [package.metadata]
@@ -193,6 +194,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2" },
     { name = "pywavelets", specifier = ">=1.5" },
     { name = "scikit-image", specifier = ">=0.24" },
+    { name = "scipy", specifier = ">=1.13" },
 ]
 
 [[package]]

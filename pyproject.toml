@@ -14,14 +14,17 @@ dependencies = [
     "numpy>=2",
     "pywavelets>=1.5",
     "scikit-image>=0.24",
+    "scipy>=1.13",
 ]
 
 [project.scripts]
 nsm-crop = "nsm.crop:main"
 nsm-raw = "nsm.viz:main"
 nsm-preprocess = "nsm.preprocess:main"
+nsm-detect = "nsm.detect:main"
 nsm-movie-raw = "nsm.movie:main_movie_raw"
 nsm-movie-preprocess = "nsm.movie:main_movie_preprocess"
+nsm-movie-preprocess-i2 = "nsm.movie:main_movie_preprocess_i2"
 
 [build-system]
 requires = ["hatchling"]
