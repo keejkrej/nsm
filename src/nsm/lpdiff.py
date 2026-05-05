@@ -73,13 +73,6 @@ def y_axis_minmax(a: np.ndarray) -> tuple[float, float]:
     return lo, hi
 
 
-def kymograph_clip_for_imshow(arr_td: np.ndarray) -> tuple[np.ndarray, float, float]:
-    """``(T, X)`` kymograph → transposed display array and ``vmin``/``vmax`` (min/max clip)."""
-    vmin, vmax = y_axis_minmax(arr_td)
-    disp = np.clip(arr_td.T, vmin, vmax)
-    return disp, vmin, vmax
-
-
 def wavelet_lp_caption(wavelet: str, lvl: int) -> str:
     if lvl:
         return f"{wavelet}, level {lvl}, axis=x"

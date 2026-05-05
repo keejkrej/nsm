@@ -20,7 +20,6 @@ dependencies = [
 nsm-crop = "nsm.crop:main"
 nsm-raw = "nsm.viz:main"
 nsm-preprocess = "nsm.preprocess:main"
-nsm-detect = "nsm.detect:main"
 nsm-movie-raw = "nsm.movie:main_movie_raw"
 nsm-movie-preprocess = "nsm.movie:main_movie_preprocess"
 

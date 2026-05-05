@@ -20,7 +20,6 @@ from nsm.data import (
 )
 from nsm.lpdiff import (
     equidistant_time_indices,
-    kymograph_clip_for_imshow,
     lpdiff_residual,
     temporal_median_background,
     y_axis_minmax,
@@ -77,7 +76,14 @@ def _plot_lpdiff(
 
     xs = np.arange(residual.shape[1], dtype=np.float32)
 
-    disp, _, _ = kymograph_clip_for_imshow(residual)
+    disp = residual.T.astype(np.float32, copy=False)
+    heat_vmin, heat_vmax = np.percentile(residual, (1.0, 99.0))
+    if (
+        not np.isfinite(heat_vmin)
+        or not np.isfinite(heat_vmax)
+        or heat_vmax <= heat_vmin
+    ):
+        heat_vmin, heat_vmax = y_axis_minmax(residual)
 
     base_ylab = "raw − temporal median"
     base_heat = "raw − temporal median (per column)"
@@ -123,6 +129,8 @@ def _plot_lpdiff(
         aspect="equal",
         origin="upper",
         cmap=IMAGE_CMAP,
+        vmin=heat_vmin,
+        vmax=heat_vmax,
         interpolation="nearest",
     )
     fig_map.colorbar(im, ax=ax_map, fraction=0.046, pad=0.04)
