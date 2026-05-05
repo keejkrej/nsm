@@ -241,7 +241,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Six PNGs per file: raw − temporal median, then wavelet low-pass along x, "
-            "then residual (preproc − LP) — t=0 line and kymograph each."
+            "then residual (preproc − LP) — t=0 line and kymograph each. "
+            "Does not write ratio / (raw÷median−1) figures (difference pipeline only)."
         )
     )
     parser.add_argument(
@@ -289,6 +290,11 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    if not args.no_save:
+        print(
+            "nsm-preprocess: difference-only (raw−median + LP + residual); "
+            "no ratio PNGs. Use `nsm-preprocess`, not legacy `ncs-preprocess`."
+        )
     data_dir = args.directory.expanduser().resolve()
     paths = discover_h5_files(data_dir)
     n_files = len(paths)
