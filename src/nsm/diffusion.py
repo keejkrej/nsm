@@ -1,4 +1,7 @@
-"""Squared displacement vs lag scatter and 1D diffusion estimate from tracks (`nsm-diffusion`)."""
+"""Estimate drift velocity and diffusion from trajectories (`nsm-diffusion`).
+
+Uses consecutive-increment Gaussian likelihood (Euler–Maruyama / drifting Brownian motion),
+never global OLS drift plus MSD vs lag."""
 
 from __future__ import annotations
 
@@ -7,10 +10,17 @@ import csv
 import sys
 from pathlib import Path
 
+import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
 
-from nsm.kymograph_io import DEFAULT_PLOTS_DIR, FIGSIZE_INCHES, resolve_output_directory
+from nsm.kymograph_io import resolve_output_directory
+from nsm.langevin_bayes import (
+    consecutive_increments,
+    fit_langevin_pymc,
+    langevin_mle,
+    summarize_langevin_idata,
+)
 
 
 def resolve_tracks_csv(path: Path) -> Path:
@@ -65,35 +75,6 @@ def read_tracks_csv(path: Path) -> np.ndarray:
     return np.asarray(rows_out, dtype=np.float64)
 
 
-def drift_ols_fit(
-    x: np.ndarray, t: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, float, float, float]:
-    """OLS ``x ≈ v t + b`` on full track. Returns ``(residual, x_fitted, v, b, R²_x)``.
-
-    Residual is **trajectory minus drift**: ``x_raw - (vt + b)``, used for Δx² vs lag pairs.
-    """
-    if x.size < 2:
-        xx = x.astype(np.float64, copy=False)
-        return xx.copy(), xx.copy(), float("nan"), float("nan"), float("nan")
-    tt = t.astype(np.float64, copy=False)
-    xx = x.astype(np.float64, copy=False)
-    A = np.column_stack((tt, np.ones(tt.shape[0])))
-    coef, _, _, _ = np.linalg.lstsq(A, xx, rcond=None)
-    v_px_per_frame = float(coef[0])
-    intercept = float(coef[1])
-    x_fit = (A @ coef).astype(np.float64, copy=False)
-    residual = xx - x_fit
-    xm = float(np.mean(xx))
-    ss_tot = float(np.dot(xx - xm, xx - xm))
-    ss_res = float(np.dot(residual, residual))
-    r2_traj = (
-        float("nan")
-        if ss_tot <= 0.0 or not np.isfinite(ss_res)
-        else 1.0 - ss_res / ss_tot
-    )
-    return residual, x_fit, v_px_per_frame, intercept, r2_traj
-
-
 def track_arrays_by_id(rows: np.ndarray) -> dict[int, tuple[np.ndarray, np.ndarray]]:
     """Grouped by trajectory id → ``(x, t)`` sorted by time with duplicate frames collapsed."""
     ids = rows[:, 0].astype(np.int64, copy=False)
@@ -118,227 +99,51 @@ def track_arrays_by_id(rows: np.ndarray) -> dict[int, tuple[np.ndarray, np.ndarr
     return out
 
 
-def lag_squared_displacements(
-    x: np.ndarray,
-    t: np.ndarray,
-    *,
-    max_lag: int | None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """All ordered pairs with positive integer lag; returns ``(lag, Δx²)``."""
-    n = int(t.size)
-    if n < 2:
-        return np.array([]), np.array([])
-    ii, jj = np.triu_indices(n, k=1)
-    dt = t[jj].astype(np.float64) - t[ii].astype(np.float64)
-    ok = dt >= 1.0
-    if max_lag is not None:
-        ok &= dt <= float(max_lag)
-    ii, jj = ii[ok], jj[ok]
-    dt = dt[ok]
-    dx = x[jj] - x[ii]
-    dsq = dx * dx
-    return dt, dsq
-
-
-def per_lag_mean_delta_x_sq(
-    lag: np.ndarray, dsq: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Per integer lag τ: arithmetic mean of all pair ``Δx²`` values, and pair count ``n``."""
-    li = lag.astype(np.int64, copy=False)
-    uniq = np.unique(li)
-    if uniq.size == 0:
-        return np.array([]), np.array([]), np.array([])
-    means: list[float] = []
-    counts: list[int] = []
-    for t in uniq:
-        msk = li == int(t)
-        means.append(float(np.mean(dsq[msk])))
-        counts.append(int(np.sum(msk)))
-    return (
-        uniq.astype(np.float64),
-        np.asarray(means, dtype=np.float64),
-        np.asarray(counts, dtype=np.float64),
-    )
-
-
-def diffusion_D_from_pairs(
-    lag: np.ndarray, dsq: np.ndarray, *, max_fit_lag: int | None
-) -> tuple[float, float, float]:
-    """``D`` from per-lag mean ``Δx²``; fit ``⟨Δx²⟩_τ ≈ 2 D τ`` weighted by pair count."""
-    tau, ms, w = per_lag_mean_delta_x_sq(lag, dsq)
-    if max_fit_lag is not None:
-        m = tau <= float(max_fit_lag)
-        tau, ms, w = tau[m], ms[m], w[m]
-    if tau.size < 2:
-        return float("nan"), float("nan"), float("nan")
-    num = float(np.sum(w * tau * ms))
-    den = float(np.sum(w * tau * tau))
-    if den <= 0.0 or not np.isfinite(num):
-        return float("nan"), float("nan"), float("nan")
-    m = num / den
-    D = 0.5 * m
-    yhat = m * tau
-    resid = ms - yhat
-    ss_res = float(np.dot(w, resid * resid))
-    ybar = float(np.sum(w * ms) / np.sum(w))
-    ss_tot = float(np.dot(w, (ms - ybar) ** 2))
-    if ss_tot <= 0.0 or not np.isfinite(ss_res):
-        r2 = float("nan")
-    else:
-        r2 = 1.0 - ss_res / ss_tot
-    return D, m, r2
-
-
 def physical_D_um2_s(D_px2_per_frame: float, *, pixel_um: float, dt_s: float) -> float:
     return D_px2_per_frame * (pixel_um**2) / dt_s
 
 
-def write_one_track_diffusion_png(
+def write_posterior_arviz_png(
+    idata: az.InferenceData,
     *,
     src_name: str,
     stem: str,
-    row: tuple[
-        int,
-        np.ndarray,
-        np.ndarray,
-        np.ndarray,
-        float,
-        float,
-        np.ndarray,
-        np.ndarray,
-        float,
-        float,
-        float,
-        int,
-    ],
+    tid: int,
     out_dir: Path,
-    scatter_cap: int,
     pixel_um: float | None,
     dt_s: float | None,
-    rng: np.random.Generator,
 ) -> Path:
-    """Two-panel figure for one trajectory; returns path written."""
-    tid, ts, xs, x_fit, v_drift, r2_drift, lag, dsq, D, m, r2, fit_cap = row
+    """``arviz.plot_pair`` KDE marginal/joint posterior for ``v`` and ``D`` (PyMC NUTS)."""
     tid_int = int(tid)
+    if (
+        pixel_um is not None
+        and dt_s is not None
+        and "v_um_s" in idata.posterior
+    ):
+        var_names = ["v_um_s", "D_um2_s"]
+    else:
+        var_names = ["v", "D"]
 
-    fig_w = min(13.5, FIGSIZE_INCHES[0] * 1.35)
-    fig_h = min(11.0, FIGSIZE_INCHES[1] * 1.12)
-    fig, axes_arr = plt.subplots(
-        1,
-        2,
-        figsize=(fig_w, fig_h),
-        squeeze=False,
-        layout="constrained",
+    az.plot_pair(
+        idata,
+        var_names=var_names,
+        kind="kde",
+        divergences=True,
+        figsize=(7.5, 6.8),
+        textsize=9.5,
     )
-    ax_left = axes_arr[0, 0]
-    ax_ms = axes_arr[0, 1]
-    cap = int(scatter_cap)
-
-    nx = int(xs.size)
-    travis: slice | np.ndarray = slice(None)
-    if nx > cap:
-        travis = np.sort(rng.choice(nx, size=cap, replace=False))
-    ax_left.scatter(ts[travis], xs[travis], s=7.0, alpha=0.45, edgecolors="none")
-    if np.isfinite(v_drift) and xs.size >= 2:
-        ax_left.plot(
-            ts.astype(np.float64),
-            x_fit,
-            color="C3",
-            linewidth=1.65,
-            label=r"$x \approx vt + b$",
-        )
-        ax_left.legend(loc="best", fontsize=7)
-    v_txt = f"{v_drift:.4g}" if np.isfinite(v_drift) else "n/a"
-    rd_txt = f"{r2_drift:.3f}" if np.isfinite(r2_drift) else "n/a"
-    ax_left.set_title(
-        f"id {tid_int} · drift · v={v_txt} px/frame · $R_x^2$={rd_txt}",
-        fontsize=9,
+    fig = plt.gcf()
+    cap = (
+        "posterior: " + ", ".join(var_names) + " · PyMC NUTS + ArviZ"
     )
-    ax_left.set_xlabel("t (frames)")
-    ax_left.set_ylabel(r"$x$ (px)")
-    ax_left.grid(True, alpha=0.35)
-
-    vis: slice | np.ndarray = slice(None)
-    if lag.size > cap:
-        vis = rng.choice(lag.size, size=cap, replace=False)
-    ax_ms.scatter(
-        lag[vis],
-        dsq[vis],
-        s=5.0,
-        alpha=0.12,
-        edgecolors="none",
-        color="0.3",
-        label=r"pair $\Delta x^2$",
-        zorder=1,
+    fig.suptitle(
+        f"{src_name} · track id {tid_int}\n{cap}",
+        fontsize=10,
+        y=1.02,
     )
-    tau_m, ms_m, _w_m = per_lag_mean_delta_x_sq(lag, dsq)
-    if tau_m.size:
-        fit_span = float(min(float(fit_cap), float(np.max(tau_m))))
-        ax_ms.axvspan(
-            0.0,
-            fit_span,
-            alpha=0.08,
-            color="0.5",
-            zorder=0,
-            linewidth=0,
-        )
-        ax_ms.plot(
-            tau_m,
-            ms_m,
-            color="C2",
-            linewidth=1.35,
-            alpha=0.92,
-            zorder=4,
-            label=r"mean $\langle\Delta x^2\rangle_\tau$",
-        )
-        ax_ms.scatter(
-            tau_m,
-            ms_m,
-            s=18.0,
-            facecolors="C2",
-            edgecolors="black",
-            linewidths=0.35,
-            zorder=5,
-            label="_nolegend_",
-        )
-    t_line_max = float(np.max(lag)) if lag.size else 0.0
-    if np.isfinite(D) and np.isfinite(m) and t_line_max > 0:
-        xs_line = np.array([0.0, t_line_max], dtype=np.float64)
-        ax_ms.plot(
-            xs_line,
-            m * xs_line,
-            color="C3",
-            linewidth=1.75,
-            zorder=6,
-            label=rf"fit $2D\tau$ ($\tau\leq{fit_cap}$)",
-        )
-    unit = "µm²/s" if pixel_um is not None else "px²/frame"
-    d_show = D
-    if pixel_um is not None and np.isfinite(D):
-        d_show = physical_D_um2_s(D, pixel_um=pixel_um, dt_s=float(dt_s))
-    d_txt = f"{d_show:.3g} {unit}" if np.isfinite(d_show) else "n/a"
-    r_txt = f"{r2:.3f}" if np.isfinite(r2) else "n/a"
-    ax_ms.set_title(
-        rf"id {tid_int} · $\Delta x^2$ vs $\tau$: pairs + mean per $\tau$ + $2D\tau$ fit · "
-        f"D≈{d_txt} · $R^2$={r_txt}",
-        fontsize=9,
-    )
-    ax_ms.set_xlabel("lag (frames)")
-    ax_ms.set_ylabel(r"$\Delta x^2$ (px², after drift removal)")
-    ax_ms.grid(True, alpha=0.35)
-    ax_ms.legend(loc="upper left", fontsize=7, framealpha=0.93)
-
-    title_bits = [
-        f"{src_name} · track id {tid_int}",
-        "nsm-diffusion · drift (left); pairs + per-τ mean + 2Dτ fit (right)",
-    ]
-    if pixel_um is not None:
-        title_bits.append(f"calibrated D: {pixel_um:g} µm/px, {float(dt_s):g} s/frame")
-    fig.suptitle("\n".join(title_bits), fontsize=11)
-
-    png_path = out_dir / f"{stem}_diffusion_id{tid_int}.png"
-    png_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(png_path, dpi=150)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    png_path = out_dir / f"{stem}_diffusion_id{tid_int}_posterior.png"
+    fig.savefig(png_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return png_path
 
@@ -346,9 +151,10 @@ def write_one_track_diffusion_png(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Read trajectory CSV (id,x,t from nsm-track). Fit OLS drift x≈vt+b; pairwise "
-            "Δx² vs lag on residuals (faint cloud); D from weighted per-lag ⟨Δx²⟩τ≈2Dτ. "
-            "Writes `{stem}_diffusion.csv` plus `{stem}_diffusion_id#.png` per track."
+            "Read trajectory CSV (id,x,t from nsm-track). Estimate drift v and diffusion D "
+            "from consecutive Gaussian increments (MLE). "
+            "With --increment-bayes: PyMC NUTS posterior, CSV summaries, and ArviZ pair plots "
+            "of v and D (PNG output requires this flag)."
         )
     )
     parser.add_argument(
@@ -362,23 +168,9 @@ def main() -> None:
         "-o",
         "--output",
         type=Path,
-        default=DEFAULT_PLOTS_DIR,
-        help="Output directory for summary CSV and one PNG per track",
-    )
-    parser.add_argument(
-        "--max-fit-lag",
-        type=int,
-        default=None,
-        help=(
-            "Use only lag ≤ this value when fitting ⟨Δx²⟩≈2Dτ (weighted per-lag means). "
-            "Default for each track: 25 %% of its frame span (t_max−t_min), at least 1."
-        ),
-    )
-    parser.add_argument(
-        "--max-lag",
-        type=int,
-        default=None,
-        help="Cap frame lag for pairs (default: no cap)",
+        required=True,
+        metavar="DIR",
+        help="Output directory for summary CSV and posterior PNGs (required)",
     )
     parser.add_argument(
         "--min-frames",
@@ -387,10 +179,10 @@ def main() -> None:
         help="Skip tracks with fewer than this many time points (default: 3)",
     )
     parser.add_argument(
-        "--min-pairs",
+        "--min-increments",
         type=int,
-        default=4,
-        help="Skip tracks with fewer displacement pairs (default: 4)",
+        default=1,
+        help="Skip tracks with fewer consecutive increments (default: 1)",
     )
     parser.add_argument(
         "--max-plots",
@@ -400,8 +192,7 @@ def main() -> None:
         default=None,
         metavar="N",
         help=(
-            "Cap how many PNGs to write (longest tracks first by pair count); "
-            "omit for all qualifying tracks"
+            "Cap posterior PNGs (longest tracks first by frame count); only with --increment-bayes"
         ),
     )
     parser.add_argument(
@@ -417,29 +208,89 @@ def main() -> None:
         help="Time per frame in seconds — with --pixel-um, reports D in µm²/s",
     )
     parser.add_argument(
-        "--scatter-cap",
+        "--increment-bayes",
+        action="store_true",
+        help=(
+            "PyMC NUTS posterior on consecutive increments; adds columns to CSV and writes "
+            "ArviZ `plot_pair` figures (`*_posterior.png`). Required for PNG output."
+        ),
+    )
+    parser.add_argument(
+        "--bayes-draws",
         type=int,
-        default=6000,
-        help="Max pairwise points drawn in the Δx² cloud per track",
+        default=1000,
+        metavar="N",
+        help="NUTS posterior draws per chain after tuning (default: 1000)",
+    )
+    parser.add_argument(
+        "--bayes-warmup",
+        type=int,
+        default=1000,
+        metavar="N",
+        help="NUTS tuning steps (default: 1000)",
+    )
+    parser.add_argument(
+        "--bayes-seed",
+        type=int,
+        default=0,
+        help="RNG seed for increment-Bayes MCMC",
+    )
+    parser.add_argument(
+        "--bayes-sigma-v",
+        type=float,
+        default=50.0,
+        metavar="SIGMA",
+        help="Gaussian prior sigma on drift v px/frame at t (default: 50, very wide)",
+    )
+    parser.add_argument(
+        "--bayes-chains",
+        type=int,
+        default=4,
+        metavar="C",
+        help="Parallel NUTS chains (≥2 recommended for r̂ / ESS; default: 4)",
+    )
+    parser.add_argument(
+        "--bayes-cores",
+        type=int,
+        default=1,
+        metavar="J",
+        help=(
+            "Worker processes for sampling (default: 1 avoids multiprocessing overhead on small models)"
+        ),
+    )
+    parser.add_argument(
+        "--bayes-target-accept",
+        type=float,
+        default=0.92,
+        metavar="P",
+        help="NUTS target acceptance (default: 0.92; increase if many divergences)",
     )
     args = parser.parse_args()
 
     if args.min_frames < 2:
         parser.error("--min-frames must be >= 2")
-    if args.min_pairs < 1:
-        parser.error("--min-pairs must be >= 1")
+    if args.min_increments < 1:
+        parser.error("--min-increments must be >= 1")
     if args.max_plots is not None and args.max_plots < 1:
         parser.error("--max-plots must be >= 1 when set")
-    if args.max_fit_lag is not None and args.max_fit_lag < 1:
-        parser.error("--max-fit-lag must be >= 1 when set")
-    if args.max_lag is not None and args.max_lag < 1:
-        parser.error("--max-lag must be >= 1 when set")
     if (args.pixel_um is None) ^ (args.dt_s is None):
         parser.error("set both --pixel-um and --dt-s for physical D, or neither")
     if args.pixel_um is not None and args.pixel_um <= 0:
         parser.error("--pixel-um must be > 0")
     if args.dt_s is not None and args.dt_s <= 0:
         parser.error("--dt-s must be > 0")
+    if args.bayes_draws < 50:
+        parser.error("--bayes-draws must be >= 50")
+    if args.bayes_warmup < 0:
+        parser.error("--bayes-warmup must be >= 0")
+    if args.bayes_sigma_v <= 0:
+        parser.error("--bayes-sigma-v must be > 0")
+    if args.bayes_chains < 1:
+        parser.error("--bayes-chains must be >= 1")
+    if args.bayes_cores < 1:
+        parser.error("--bayes-cores must be >= 1")
+    if not (0.5 < args.bayes_target_accept < 1.0):
+        parser.error("--bayes-target-accept must be between 0.5 and 1.0")
 
     src = resolve_tracks_csv(args.tracks_or_peaks_csv)
     rows = read_tracks_csv(src)
@@ -451,56 +302,140 @@ def main() -> None:
         stem = stem[: -len("_tracks")]
     csv_path = out_dir / f"{stem}_diffusion.csv"
 
-    records: list[
-        tuple[int, int, int, float, float, float | None, str]
-    ] = []  # id, frames, pairs, D, R2, D_phys?, note
+    records: list[tuple] = []
 
-    plot_candidates: list[
-        tuple[
-            int,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            float,
-            float,
-            np.ndarray,
-            np.ndarray,
-            float,
-            float,
-            float,
-            int,
-        ]
-    ] = []
-    # tuple: tid, ts, xs, x_fit, v_drift, r2_drift, lag, dsq, D, m, r2, fit_cap
+    posterior_plot_rows: list[tuple[int, int, az.InferenceData]] = []
+
+    def empty_bayes() -> tuple[
+        float, float, float, float, float, float, float, float, float, float
+    ]:
+        x = float("nan")
+        return (x, x, x, x, x, x, x, x, x, x)
 
     total_warn_dup = False
     for tid, (xs, ts) in sorted(by_id.items()):
         note = ""
+        (
+            vb_m,
+            vb_s,
+            db_m,
+            db_s,
+            db_q05,
+            db_q95,
+            v_r,
+            d_r,
+            ess_v,
+            ess_d,
+        ) = empty_bayes()
         if ts.size < int(args.min_frames):
-            records.append((tid, int(ts.size), 0, float("nan"), float("nan"), None, "< min-frames"))
+            records.append(
+                (
+                    tid,
+                    int(ts.size),
+                    0,
+                    float("nan"),
+                    float("nan"),
+                    None,
+                    "< min-frames",
+                    *empty_bayes(),
+                )
+            )
             continue
         if ts.size != rows[rows[:, 0] == tid].shape[0]:
             total_warn_dup = True
-        _x_resid, x_fit, v_drift, _b_drift, r2_drift = drift_ols_fit(xs, ts)
-        lag, dsq = lag_squared_displacements(_x_resid, ts, max_lag=args.max_lag)
-        n_pairs = int(lag.size)
-        if n_pairs < int(args.min_pairs):
-            records.append((tid, int(ts.size), n_pairs, float("nan"), float("nan"), None, "< min-pairs"))
+
+        try:
+            dx_i, dt_i = consecutive_increments(xs, ts)
+        except ValueError:
+            records.append(
+                (
+                    tid,
+                    int(ts.size),
+                    0,
+                    float("nan"),
+                    float("nan"),
+                    None,
+                    "non-increasing time",
+                    *empty_bayes(),
+                )
+            )
             continue
-        span = max(1, int(ts.max()) - int(ts.min()))
-        fit_cap = (
-            int(args.max_fit_lag)
-            if args.max_fit_lag is not None
-            else max(1, int(0.25 * span))
+
+        n_inc = int(dx_i.size)
+        if n_inc < int(args.min_increments):
+            records.append(
+                (
+                    tid,
+                    int(ts.size),
+                    n_inc,
+                    float("nan"),
+                    float("nan"),
+                    None,
+                    "< min-increments",
+                    *empty_bayes(),
+                )
+            )
+            continue
+
+        v_mle, d_mle = langevin_mle(dx_i, dt_i)
+        if not np.isfinite(d_mle):
+            note = ((note + "; ") if note else "") + "D MLE nan"
+            d_phys = None
+        elif args.pixel_um is not None:
+            d_phys = physical_D_um2_s(d_mle, pixel_um=float(args.pixel_um), dt_s=float(args.dt_s))
+        else:
+            d_phys = None
+
+        if args.increment_bayes:
+            try:
+                if n_inc >= 2:
+                    idata = fit_langevin_pymc(
+                        dx_i,
+                        dt_i,
+                        draws=int(args.bayes_draws),
+                        tune=int(args.bayes_warmup),
+                        chains=int(args.bayes_chains),
+                        cores=int(args.bayes_cores),
+                        target_accept=float(args.bayes_target_accept),
+                        sigma_v_prior=float(args.bayes_sigma_v),
+                        pixel_um=float(args.pixel_um) if args.pixel_um is not None else None,
+                        dt_s=float(args.dt_s) if args.dt_s is not None else None,
+                        random_seed=int(args.bayes_seed),
+                        progressbar=False,
+                    )
+                    summ = summarize_langevin_idata(idata)
+                    vb_m, vb_s = summ.v_mean, summ.v_sd
+                    db_m, db_s = summ.d_mean, summ.d_sd
+                    db_q05, db_q95 = summ.d_q05, summ.d_q95
+                    v_r, d_r = summ.v_r_hat, summ.d_r_hat
+                    ess_v, ess_d = summ.ess_v, summ.ess_D
+                    posterior_plot_rows.append((tid, int(ts.size), idata))
+                else:
+                    note = (note + "; " if note else "") + "<2 increments for bayes"
+            except (ValueError, OSError, RuntimeError) as exc:
+                note = (note + "; " if note else "") + f"increment-bayes: {exc}"
+
+        records.append(
+            (
+                tid,
+                int(ts.size),
+                n_inc,
+                v_mle,
+                d_mle,
+                d_phys,
+                note,
+                vb_m,
+                vb_s,
+                db_m,
+                db_s,
+                db_q05,
+                db_q95,
+                v_r,
+                d_r,
+                ess_v,
+                ess_d,
+            )
         )
-        D, m, r2 = diffusion_D_from_pairs(lag, dsq, max_fit_lag=fit_cap)
-        d_phys = None
-        if args.pixel_um is not None and np.isfinite(D):
-            d_phys = physical_D_um2_s(D, pixel_um=args.pixel_um, dt_s=float(args.dt_s))
-        plot_candidates.append(
-            (tid, ts, xs, x_fit, v_drift, r2_drift, lag, dsq, D, m, r2, fit_cap)
-        )
-        records.append((tid, int(ts.size), n_pairs, D, r2, d_phys, note))
 
     if total_warn_dup:
         print(
@@ -508,75 +443,208 @@ def main() -> None:
             file=sys.stderr,
         )
 
+    def _bayes_cells(
+        vb_m: float,
+        vb_s: float,
+        db_m: float,
+        db_s: float,
+        db_q05: float,
+        db_q95: float,
+        v_r: float,
+        d_r: float,
+        ess_v: float,
+        ess_d: float,
+    ) -> list[str]:
+        def g(x: float) -> str:
+            return f"{x:.6g}" if np.isfinite(x) else ""
+
+        return [
+            g(vb_m),
+            g(vb_s),
+            g(db_m),
+            g(db_s),
+            g(db_q05),
+            g(db_q95),
+            g(v_r),
+            g(d_r),
+            g(ess_v),
+            g(ess_d),
+        ]
+
+    bayes_cols = [
+        "v_bayes_mean_px_per_frame",
+        "v_bayes_sd_px_per_frame",
+        "D_bayes_mean_px2_per_frame",
+        "D_bayes_sd_px2_per_frame",
+        "D_bayes_q05_px2_per_frame",
+        "D_bayes_q95_px2_per_frame",
+        "v_r_hat",
+        "D_r_hat",
+        "ess_bulk_v",
+        "ess_bulk_D",
+    ]
+
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if args.pixel_um is not None:
-            w.writerow(
-                [
-                    "id",
-                    "n_frames",
-                    "n_pairs",
-                    "D_px2_per_frame",
-                    "R2_fit",
-                    "D_um2_per_s",
-                    "note",
-                ]
-            )
+            head = [
+                "id",
+                "n_frames",
+                "n_increments",
+                "v_mle_px_per_frame",
+                "D_mle_px2_per_frame",
+                "D_mle_um2_per_s",
+                "note",
+            ]
+            if args.increment_bayes:
+                head.extend(bayes_cols)
+                head.append("D_bayes_mean_um2_per_s")
+            w.writerow(head)
             for r in records:
-                tid, nf, npair, D, r2, dph, note = r
+                (
+                    tid,
+                    nf,
+                    n_inc,
+                    v_mle,
+                    d_mle,
+                    dph,
+                    note,
+                    vb_m,
+                    vb_s,
+                    db_m,
+                    db_s,
+                    db_q05,
+                    db_q95,
+                    v_r,
+                    d_r,
+                    ess_v,
+                    ess_d,
+                ) = r
                 dph_s = "" if dph is None or not np.isfinite(dph) else f"{dph:.6g}"
-                w.writerow(
-                    [
-                        tid,
-                        nf,
-                        npair,
-                        f"{D:.6g}" if np.isfinite(D) else "",
-                        f"{r2:.6g}" if np.isfinite(r2) else "",
-                        dph_s,
-                        note,
-                    ]
-                )
+                row = [
+                    tid,
+                    nf,
+                    n_inc,
+                    f"{v_mle:.6g}" if np.isfinite(v_mle) else "",
+                    f"{d_mle:.6g}" if np.isfinite(d_mle) else "",
+                    dph_s,
+                    note,
+                ]
+                if args.increment_bayes:
+                    row.extend(
+                        _bayes_cells(
+                            vb_m,
+                            vb_s,
+                            db_m,
+                            db_s,
+                            db_q05,
+                            db_q95,
+                            v_r,
+                            d_r,
+                            ess_v,
+                            ess_d,
+                        )
+                    )
+                    d_b_um = ""
+                    if args.pixel_um is not None and np.isfinite(db_m):
+                        d_b_um_val = physical_D_um2_s(
+                            db_m, pixel_um=float(args.pixel_um), dt_s=float(args.dt_s)
+                        )
+                        d_b_um = f"{d_b_um_val:.6g}" if np.isfinite(d_b_um_val) else ""
+                    row.append(d_b_um)
+                w.writerow(row)
         else:
-            w.writerow(["id", "n_frames", "n_pairs", "D_px2_per_frame", "R2_fit", "note"])
+            head = [
+                "id",
+                "n_frames",
+                "n_increments",
+                "v_mle_px_per_frame",
+                "D_mle_px2_per_frame",
+                "note",
+            ]
+            if args.increment_bayes:
+                head.extend(bayes_cols)
+            w.writerow(head)
             for r in records:
-                tid, nf, npair, D, r2, _dph, note = r
-                w.writerow(
-                    [
-                        tid,
-                        nf,
-                        npair,
-                        f"{D:.6g}" if np.isfinite(D) else "",
-                        f"{r2:.6g}" if np.isfinite(r2) else "",
-                        note,
-                    ]
-                )
+                (
+                    tid,
+                    nf,
+                    n_inc,
+                    v_mle,
+                    d_mle,
+                    _dph,
+                    note,
+                    vb_m,
+                    vb_s,
+                    db_m,
+                    db_s,
+                    db_q05,
+                    db_q95,
+                    v_r,
+                    d_r,
+                    ess_v,
+                    ess_d,
+                ) = r
+                row = [
+                    tid,
+                    nf,
+                    n_inc,
+                    f"{v_mle:.6g}" if np.isfinite(v_mle) else "",
+                    f"{d_mle:.6g}" if np.isfinite(d_mle) else "",
+                    note,
+                ]
+                if args.increment_bayes:
+                    row.extend(
+                        _bayes_cells(
+                            vb_m,
+                            vb_s,
+                            db_m,
+                            db_s,
+                            db_q05,
+                            db_q95,
+                            v_r,
+                            d_r,
+                            ess_v,
+                            ess_d,
+                        )
+                    )
+                w.writerow(row)
 
     print(f"Wrote {csv_path.resolve()}")
 
-    plot_candidates.sort(key=lambda row: -row[6].size)
-    plot_rows = plot_candidates
-    if args.max_plots is not None:
-        plot_rows = plot_rows[: int(args.max_plots)]
-    if not plot_rows:
+    if not args.increment_bayes:
         print(
-            "No tracks met --min-frames / --min-pairs; skipping PNG.",
+            "Note: posterior PNGs require --increment-bayes (PyMC NUTS + ArviZ).",
             file=sys.stderr,
         )
-        return
-
-    rng = np.random.default_rng(0)
-    for row in plot_rows:
-        p = write_one_track_diffusion_png(
-            src_name=src.name,
-            stem=stem,
-            row=row,
-            out_dir=out_dir,
-            scatter_cap=int(args.scatter_cap),
-            pixel_um=args.pixel_um,
-            dt_s=args.dt_s,
-            rng=rng,
-        )
-        print(f"Wrote {p.resolve()}")
+    else:
+        posterior_plot_rows.sort(key=lambda r: -r[1])
+        plot_rows = posterior_plot_rows
+        if args.max_plots is not None:
+            plot_rows = plot_rows[: int(args.max_plots)]
+        if not plot_rows:
+            print(
+                "No posterior plots (no successful sampling runs).",
+                file=sys.stderr,
+            )
+        else:
+            for plot_tid, _nf, idata in plot_rows:
+                try:
+                    path = write_posterior_arviz_png(
+                        idata,
+                        src_name=src.name,
+                        stem=stem,
+                        tid=int(plot_tid),
+                        out_dir=out_dir,
+                        pixel_um=args.pixel_um,
+                        dt_s=args.dt_s,
+                    )
+                    print(f"Wrote {path.resolve()}")
+                except (ValueError, OSError, RuntimeError) as exc:
+                    print(
+                        f"Posterior plot skipped for id {plot_tid}: {exc}",
+                        file=sys.stderr,
+                    )
 
 
 if __name__ == "__main__":
