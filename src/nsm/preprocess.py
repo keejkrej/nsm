@@ -52,9 +52,9 @@ def _write_preprocessed_h5(
             data=residual_sq_gaussian.astype(np.float32, copy=False),
         )
     print(
-        f"Wrote {path.resolve()} — {dataset_name!r} "
-        "(median subtract − wavelet LP along x); "
-        f"{RESIDUAL_SQ_GAUSSIAN_DATASET!r} (detail² then Gaussian σ_x="
+        f"Wrote {path.resolve()} - {dataset_name!r} "
+        "(median subtract - wavelet LP along x); "
+        f"{RESIDUAL_SQ_GAUSSIAN_DATASET!r} (detail^2 then Gaussian sigma_x="
         f"{RESIDUAL_SQ_GAUSSIAN_SIGMA:g} along x)"
     )
 
@@ -242,7 +242,7 @@ def main() -> None:
     if not args.no_save:
         print(
             f"nsm-preprocess: preprocessed .h5 (wavelet detail + {RESIDUAL_SQ_GAUSSIAN_DATASET}) + "
-            "2× PNG panels."
+            "2 PNG panels."
         )
 
     out_dir: Path | None = None if args.no_save else resolve_output_directory(args.output)
