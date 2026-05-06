@@ -280,7 +280,8 @@ def main() -> None:
         description=(
             "Read peaks-only CSV (x,t,intensity) and write id,x,t,intensity tracks CSV "
             "plus a heatmap PNG with peaks colored by track id (requires sibling "
-            "preprocessed .h5 or --preprocessed-h5)."
+            "preprocessed .h5 or --preprocessed-h5). "
+            "Use nsm-diffusion on *_tracks.csv for squared-displacement vs lag and D estimates."
         )
     )
     parser.add_argument(
