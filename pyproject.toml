@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=2",
     "pywavelets>=1.5",
     "scikit-image>=0.24",
+    "scikit-learn>=1.5",
     "scipy>=1.13",
 ]
 
