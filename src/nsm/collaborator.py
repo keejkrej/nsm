@@ -1,14 +1,35 @@
+"""GPU-oriented segmented Viterbi kymograph tracking (collaborator implementation).
+
+This is an alternative to the wavelet-residual + clustering pipeline in
+``nsm.track``. For side-by-side comparisons on the **same** data, use a shared
+cropped HDF5 (for example from ``nsm-crop``) and either :func:`load_h5_file` with
+``trim_trailing_rows=0`` or :func:`nsm.kymograph_io.load_kymograph_binned` with
+identical ``binning_x``, ``binned_time_ms``, and time window.
+
+Requires CuPy (CUDA) and Numba; install Numba via ``pip install nsm[collaborator]``
+and install a CuPy wheel that matches your CUDA runtime.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
 import h5py
-import numpy as np
-from collections import defaultdict
 import numba
-import cupy as cp
+import numpy as np
+try:
+    import cupy as cp
+except ImportError as _e:
+    raise ImportError(
+        "The nsm.collaborator module requires CuPy (CUDA). "
+        "Install a CuPy wheel that matches your CUDA version: https://docs.cupy.dev/en/stable/install.html"
+    ) from _e
 from cupyx.scipy.ndimage import uniform_filter1d as cupy_uniform_filter1d
 from cupyx.scipy.ndimage import gaussian_filter
 from cupyx.scipy.special import erf as cp_erf
 from cupyx.scipy.special import erfinv as cp_erfinv
 
-
+from nsm.kymograph_io import DEFAULT_KYMOGRAPH_DATASET, load_kymograph_binned
 
 # ------------------------------------------------------------------------------
 # remove background by subtracting moving average in two directions
@@ -620,82 +641,79 @@ def stitch_path_with_overlap(path, segment_length, overlap_length, trim_low_prob
     return stitched_track, start_time, avg_prob
 
 
-def load_envue_mat_file(filename,binning_x=1, binned_time_ms=2.857):
+def load_envue_mat_file(filename, binning_x=1, binned_time_ms=2.857):
     import scipy.io as sio
+
+    from nsm.kymograph_io import bin_kymograph_spatiotemporal_sum
+
     file = sio.loadmat(filename, simplify_cells=True)
-    kymo = file['Im']
-    raw_frame_rate = file['FrameRate'] / file['AccumulateCount']
-    
-    binning_t = max(1, round(binned_time_ms * raw_frame_rate / 1000.0))
-    print(f"Binning time: {binned_time_ms:.3f} ms → binning_t = {binning_t} frames at {raw_frame_rate} fps")
-    
-    # Bin by summing: shape is (t, x)
-    t, x = kymo.shape
-    t_binned = (t // binning_t) * binning_t
-    x_binned = (x // binning_x) * binning_x
-    
-    # Crop to make divisible by binning factors
-    kymo = kymo[:t_binned, :x_binned]
-    
-    # Reshape and sum for binning
-    kymo = kymo.reshape(t_binned // binning_t, binning_t, 
-                        x_binned // binning_x, binning_x)
-    kymo = kymo.sum(axis=(1, 3))
-    
-    # Calculate resulting frame rate after binning
-    binned_frame_rate = raw_frame_rate / binning_t
+    kymo = np.asarray(file["Im"], dtype=np.float64)
+    raw_frame_rate = float(np.asarray(file["FrameRate"]) / np.asarray(file["AccumulateCount"]))
+    binning_t = max(1, int(round(binned_time_ms * raw_frame_rate / 1000.0)))
+    print(
+        f"Binning time: {binned_time_ms:.3f} ms → binning_t = {binning_t} frames at {raw_frame_rate} fps"
+    )
+    kymo, binned_frame_rate = bin_kymograph_spatiotemporal_sum(
+        kymo,
+        binning_x=binning_x,
+        binned_time_ms=binned_time_ms,
+        raw_frame_rate_hz=raw_frame_rate,
+    )
     print(f"Resulting frame rate after binning: {binned_frame_rate:.2f} fps")
     return kymo, binned_frame_rate
 
 
-def load_h5_file(filename, binning_x=2, binned_time_ms=2.857):
-    """Load kymograph from HDF5 file with spatial and temporal binning.
-    
-    Parameters:
-    -----------
-    filename : str
-        Path to the HDF5 file
-    binning_x : int
-        Spatial binning factor (default: 2)
-    binned_time_ms : float
-        Desired time duration per binned frame in milliseconds (default: 2.857 ms, ~8 frames at 2800 fps)
-        
-    Returns:
-    --------
-    kymo : np.ndarray
-        Binned kymograph data
-    binned_frame_rate : float
-        Frame rate after binning (fps)
+def load_h5_file(
+    filename: str | Path,
+    binning_x: int = 2,
+    binned_time_ms: float = 2.857,
+    *,
+    trim_trailing_rows: int = 5000,
+    dataset_name: str = DEFAULT_KYMOGRAPH_DATASET,
+    max_time: int | None = None,
+    default_fps: float = 2800.0,
+) -> tuple[np.ndarray, float]:
+    """Load kymograph from HDF5 with the same sum-binning as the collaborator notebook.
+
+    Binning matches :func:`nsm.kymograph_io.load_kymograph_binned`. For comparisons
+    with the main ``nsm`` CLI on a cropped file, set ``trim_trailing_rows=0`` (and
+    use ``max_time`` or an ``nsm-crop`` output so both pipelines see the same window).
+
+    Parameters
+    ----------
+    filename
+        Path to the HDF5 file.
+    trim_trailing_rows
+        Rows dropped from the **end** of the raw dataset before binning. The
+        historical notebook default was 5000; use ``0`` when the file is already
+        cropped externally.
+    dataset_name
+        HDF5 dataset key (default matches :data:`nsm.kymograph_io.DEFAULT_KYMOGRAPH_DATASET`).
+    max_time
+        If set, read at most this many leading time rows (after ``trim_trailing_rows``).
+    default_fps
+        Used when the file has no ``fps`` attribute.
     """
-    f = h5py.File(filename, 'r', swmr=True, libver='latest', locking=False)
-    kymo = f['kymograph']
-    raw_frame_rate = f.attrs.get('fps', 2800)
-    # remove the last 5000 frames
-    chunk_size = 5000
-    kymo = kymo[: -chunk_size, :].astype(np.int32)
-    
-    # Calculate binning_t from desired binned time and frame rate
-    binning_t = max(1, round(binned_time_ms * raw_frame_rate / 1000.0))
-    print(f"Binning time: {binned_time_ms:.3f} ms → binning_t = {binning_t} frames at {raw_frame_rate} fps")
-    
-    # Bin by summing: shape is (t, x)
-    t, x = kymo.shape
-    t_binned = (t // binning_t) * binning_t
-    x_binned = (x // binning_x) * binning_x
-    
-    # Crop to make divisible by binning factors
-    kymo = kymo[:t_binned, :x_binned]
-    
-    # Reshape and sum for binning
-    kymo = kymo.reshape(t_binned // binning_t, binning_t, 
-                        x_binned // binning_x, binning_x)
-    kymo = kymo.sum(axis=(1, 3))
-    
-    # Calculate resulting frame rate after binning
-    binned_frame_rate = raw_frame_rate / binning_t
+    path = Path(filename).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"not a file: {path}")
+    with h5py.File(path, "r", swmr=True, libver="latest", locking=False) as f:
+        raw_frame_rate = float(f.attrs.get("fps", default_fps))
+    binning_t = max(1, int(round(binned_time_ms * raw_frame_rate / 1000.0)))
+    print(
+        f"Binning time: {binned_time_ms:.3f} ms → binning_t = {binning_t} frames "
+        f"at {raw_frame_rate} fps"
+    )
+    kymo, binned_frame_rate = load_kymograph_binned(
+        path,
+        dataset_name=dataset_name,
+        binning_x=binning_x,
+        binned_time_ms=binned_time_ms,
+        default_fps=default_fps,
+        trim_trailing_rows=trim_trailing_rows,
+        max_time=max_time,
+    )
     print(f"Resulting frame rate after binning: {binned_frame_rate:.2f} fps")
-    
-    f.close()
     return kymo, binned_frame_rate
 
 
@@ -1012,8 +1030,15 @@ class ParticleTrack:
             New ParticleTrack object with trimmed track, or None if track is too low probability
         """
         if self.track_probabilities is None:
-            # Fall back to segment-based trimming if track probabilities not available
-            return self.trim_low_probability_ends(threshold_factor)
+            trimmed_path = trim_low_probability_segments(self.path, threshold_factor)
+            if not trimmed_path:
+                return None
+            return ParticleTrack(
+                trimmed_path,
+                self.segment_length,
+                self.overlap_length,
+                self.prob_map,
+            )
         
         if self.stitched_track is None or len(self.stitched_track) == 0:
             return None
