@@ -18,6 +18,11 @@ dependencies = [
     "scipy>=1.13",
 ]
 
+[project.optional-dependencies]
+collaborator = [
+    "numba>=0.59",
+]
+
 [project.scripts]
 nsm-crop = "nsm.crop:main"
 nsm-raw = "nsm.plot_raw:main"
