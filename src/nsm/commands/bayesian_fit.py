@@ -1,12 +1,7 @@
-"""Bayesian inference for overdamped drift + diffusion on consecutive increments.
+"""Bayesian fit command implementation.
 
-Model (1D, natural times between observations):
-
-    ΔX_k | v, D ~ Normal(v δt_k, 2 D δt_k),   k = 0 … N−1
-
-with independent increments (non-overlapping steps). Inference uses **PyMC** (NUTS)
-and **ArviZ** for summaries and plots — the standard stack for this Gaussian
-likelihood; no custom MCMC.
+This module hosts Bayesian-specific helpers used by both direct command entrypoints
+and the high-level ``nsm msd-fit --increment-bayes`` workflow.
 """
 
 from __future__ import annotations
@@ -14,6 +9,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 import arviz as az
 import numpy as np
@@ -22,11 +18,18 @@ import pytensor.tensor as pt
 from scipy import stats
 
 
-def consecutive_increments(
-    x: np.ndarray,
-    t: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Adjacent-step displacements δx and frame gaps δt (same units as CSV ``t``)."""
+NAME = "bayesian-fit"
+HELP = "Run Bayesian drift/diffusion posterior fits (PyMC) on trajectory increments."
+
+
+def consecutive_increments(x: np.ndarray, t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Adjacent-step displacements ``δx`` and frame gaps ``δt``.
+
+    Parameters
+    ----------
+    x, t : ndarray
+        Position and time arrays with matching shape.
+    """
     xx = np.asarray(x, dtype=np.float64).ravel()
     tt = np.asarray(t, dtype=np.float64).ravel()
     if xx.size != tt.size or xx.size < 2:
@@ -44,7 +47,10 @@ def langevin_increment_logpdf_sum(
     v: float,
     d: float,
 ) -> float:
-    """Sum of log pdfs Σ_k log Normal(dx_k | v δt_k, 2 D δt_k). ``D > 0`` required."""
+    """Sum of log pdfs for Gaussian increments under Langevin dynamics.
+
+    Uses ``dx_k ~ Normal(v δt_k, sqrt(2 D δt_k))`` with ``D > 0``.
+    """
     if not (math.isfinite(v) and math.isfinite(d) and d > 0.0):
         return float("-inf")
     scale = np.sqrt(2.0 * d * dt)
@@ -52,7 +58,11 @@ def langevin_increment_logpdf_sum(
 
 
 def langevin_mle(dx: np.ndarray, dt: np.ndarray) -> tuple[float, float]:
-    """Closed-form MLE on consecutive increments (secant drift + scaled residual variance)."""
+    """Closed-form MLE on consecutive increments.
+
+    Returns ``(v_mle, D_mle)`` where ``v`` is drift in px/frame and ``D`` is
+    px²/frame.
+    """
     if dx.size < 1 or dt.size != dx.size:
         return float("nan"), float("nan")
     tsum = float(np.sum(dt))
@@ -68,7 +78,7 @@ def langevin_mle(dx: np.ndarray, dt: np.ndarray) -> tuple[float, float]:
 
 @dataclass(frozen=True)
 class PymcPosteriorSummary:
-    """Marginal posterior summaries (pixel units for ``v`` and ``D``)."""
+    """Marginal posterior summaries for ``v`` and ``D``."""
 
     v_mean: float
     v_sd: float
@@ -83,7 +93,7 @@ class PymcPosteriorSummary:
 
 
 def summarize_langevin_idata(idata: az.InferenceData) -> PymcPosteriorSummary:
-    """Posterior means, SDs, quantiles, and standard MCMC diagnostics for ``v`` and ``D`` (px units)."""
+    """Return posterior summary statistics for ``v`` and ``D``."""
     s = az.summary(
         idata,
         var_names=["v", "D"],
@@ -124,25 +134,16 @@ def fit_langevin_pymc(
     random_seed: int | None = None,
     progressbar: bool = False,
 ) -> az.InferenceData:
-    """NUTS posterior for ``v`` (px/frame) and ``D`` (px²/frame).
+    """Fit posterior over drift and diffusion with PyMC NUTS.
 
-    Likelihood: ``dx_k ~ Normal(v * dt_k, sqrt(2 * D * dt_k))``.
-
-    Optional calibration adds deterministic ``v_um_s`` and ``D_um2_s`` for plots/IO.
-
-    Parameters
-    ----------
-    draws, tune, chains :
-        Standard ``pm.sample`` settings.
-    cores :
-        Parallel workers (``1`` avoids multiprocessing overhead / Windows quirks for small models).
-    target_accept :
-        NUTS step size adaptation (higher → smaller step, safer for difficult geometries).
+    Likelihood:
+    ``dx_k ~ Normal(v * dt_k, sqrt(2 * D * dt_k))``.
     """
     dx_obs = np.asarray(dx, dtype=np.float64).ravel()
     dt_obs = np.asarray(dt, dtype=np.float64).ravel()
     if dx_obs.size < 2 or dt_obs.size != dx_obs.size:
         raise ValueError("need at least two consecutive increments")
+
     v_mle, d_mle = langevin_mle(dx_obs, dt_obs)
     if not (math.isfinite(v_mle) and math.isfinite(d_mle) and d_mle > 0.0):
         raise ValueError("invalid MLE for initvals; check increments")
@@ -182,3 +183,25 @@ def fit_langevin_pymc(
             _pm_log.setLevel(_pm_prev)
 
     return idata
+
+
+def run_command(
+    tracks_or_peaks_csv: Path,
+    output: Path,
+    min_frames: int = 3,
+    max_plots: int | None = None,
+) -> None:
+    """Run the MSD command in Bayesian mode for a CSV of trajectories."""
+    from nsm.commands import msd_fit as diffusion_fit
+
+    args = [
+        str(tracks_or_peaks_csv),
+        "--output",
+        str(output),
+        "--increment-bayes",
+        "--min-frames",
+        str(min_frames),
+    ]
+    if max_plots is not None:
+        args.extend(["--max-plots", str(max_plots)])
+    diffusion_fit.run(args)

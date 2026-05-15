@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = [
     { name = "keejkrej", email = "ctyjackcao@outlook.com" }
 ]
-description = "Visualize NSM HDF5 datasets"
+description = "workflow-first CLI for NSM trajectory extraction and fit tools"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "arviz>=0.18",
@@ -16,20 +16,13 @@ dependencies = [
     "scikit-image>=0.24",
     "scikit-learn>=1.5",
     "scipy>=1.13",
-]
-
-[project.optional-dependencies]
-collaborator = [
+    "typer>=0.12",
     "numba>=0.59",
 ]
 
+
 [project.scripts]
-nsm-crop = "nsm.crop:main"
-nsm-raw = "nsm.plot_raw:main"
-nsm-preprocess = "nsm.preprocess:main"
-nsm-detect = "nsm.peak_detect:main"
-nsm-track = "nsm.track:main"
-nsm-diffusion = "nsm.diffusion:main"
+nsm = "nsm.main:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -1,7 +1,8 @@
-"""Estimate drift velocity and diffusion from trajectories (`nsm-diffusion`).
+"""MSD/MLE fit command implementation.
 
-Uses consecutive-increment Gaussian likelihood (Euler–Maruyama / drifting Brownian motion),
-never global OLS drift plus MSD vs lag."""
+This module contains the full trajectory fitting pipeline that was previously
+kept in ``src/nsm/diffusion_impl.py``.
+"""
 
 from __future__ import annotations
 
@@ -14,13 +15,17 @@ import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
 
-from nsm.kymograph_io import resolve_output_directory
-from nsm.langevin_bayes import (
+from nsm.commands.bayesian_fit import (
     consecutive_increments,
     fit_langevin_pymc,
     langevin_mle,
     summarize_langevin_idata,
 )
+from nsm.core import resolve_output_directory
+
+
+# ---------------------------------------------------------------------------
+# Utilities for loading and grouping trajectories
 
 
 def resolve_tracks_csv(path: Path) -> Path:
@@ -76,7 +81,10 @@ def read_tracks_csv(path: Path) -> np.ndarray:
 
 
 def track_arrays_by_id(rows: np.ndarray) -> dict[int, tuple[np.ndarray, np.ndarray]]:
-    """Grouped by trajectory id → ``(x, t)`` sorted by time with duplicate frames collapsed."""
+    """Group rows by trajectory id and return ``(x, t)`` sorted by time.
+
+    Duplicate time indices within a trajectory are averaged in place.
+    """
     ids = rows[:, 0].astype(np.int64, copy=False)
     uniq = np.unique(ids)
     out: dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -103,6 +111,7 @@ def physical_D_um2_s(D_px2_per_frame: float, *, pixel_um: float, dt_s: float) ->
     return D_px2_per_frame * (pixel_um**2) / dt_s
 
 
+
 def write_posterior_arviz_png(
     idata: az.InferenceData,
     *,
@@ -113,7 +122,7 @@ def write_posterior_arviz_png(
     pixel_um: float | None,
     dt_s: float | None,
 ) -> Path:
-    """``arviz.plot_pair`` KDE marginal/joint posterior for ``v`` and ``D`` (PyMC NUTS)."""
+    """Write ArviZ joint/marginal posterior KDE for ``v`` and ``D``."""
     tid_int = int(tid)
     if (
         pixel_um is not None
@@ -133,9 +142,7 @@ def write_posterior_arviz_png(
         textsize=9.5,
     )
     fig = plt.gcf()
-    cap = (
-        "posterior: " + ", ".join(var_names) + " · PyMC NUTS + ArviZ"
-    )
+    cap = "posterior: " + ", ".join(var_names) + " · PyMC NUTS + ArviZ"
     fig.suptitle(
         f"{src_name} · track id {tid_int}\n{cap}",
         fontsize=10,
@@ -148,7 +155,8 @@ def write_posterior_arviz_png(
     return png_path
 
 
-def main() -> None:
+
+def run(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Read trajectory CSV (id,x,t from nsm-track). Estimate drift v and diffusion D "
@@ -265,7 +273,7 @@ def main() -> None:
         metavar="P",
         help="NUTS target acceptance (default: 0.92; increase if many divergences)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.min_frames < 2:
         parser.error("--min-frames must be >= 2")
@@ -647,5 +655,26 @@ def main() -> None:
                     )
 
 
-if __name__ == "__main__":
-    main()
+# ----------------------------------------------------------------------------
+# CLI adapter expected by Typer command entrypoint
+
+
+NAME = "msd-fit"
+HELP = "Fit per-trajectory drift and diffusion from displacement increments (MLE)."
+
+
+def run_command(
+    tracks_or_peaks_csv: Path,
+    output: Path,
+    min_frames: int = 3,
+) -> None:
+    """Run the diffusion workflow with MLE-only settings."""
+    run(
+        [
+            str(tracks_or_peaks_csv),
+            "--output",
+            str(output),
+            "--min-frames",
+            str(min_frames),
+        ]
+    )
